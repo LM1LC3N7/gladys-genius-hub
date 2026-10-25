@@ -1,177 +1,158 @@
 {
   "manifest_version": 1,
   "type": "device",
-  "name": "Demo Devices Template",
+  "name": "Genius Hub",
   "description": {
-    "en": "Starter template showing sensors, a switch, a dimmable light and a smart plug.",
-    "fr": "Template de démarrage : capteurs, interrupteur, lampe variable et prise connectée."
+    "en": "Unofficial: Genius Hub heating, on your network: zones, setpoints, modes, valves, sensors.",
+    "fr": "Non officiel : chauffage Genius Hub, en local : zones, consignes, modes, vannes, capteurs."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/gladysassistant/integration-template-js:1.0.0",
+  "version": "0.1.0",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-genius-hub:0.1.0",
   "gladys_version": ">=5.1.0",
-  "cover_image": "https://raw.githubusercontent.com/GladysAssistant/integration-template-js/master/cover.png",
-  "categories": ["lighting", "security", "environment"],
-  "transports": ["local", "cloud"],
+  "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-genius-hub/main/cover.png",
+  "categories": ["climate"],
+  "transports": ["local"],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Getting started", "fr": "Pour commencer" },
+      "label": { "en": "Genius Hub", "fr": "Genius Hub" },
       "description": {
-        "en": "The demo weather station reads real data from the free Open-Meteo API: pick the coordinates to observe. No account, no API key.",
-        "fr": "La station météo de démonstration lit de vraies données via l'API gratuite Open-Meteo : choisissez les coordonnées à observer. Pas de compte, pas de clé d'API."
+        "en": "Unofficial connector, not affiliated with Genius Hub (Heat Genius). It reads a Genius Hub through its local API (port 1223 of the hub, no cloud): one device per zone (radiator room, wet underfloor, hot water, on/off timer) with its temperature, setpoint, modes, heat demand, override and issues, and one read-only device per radiator valve, thermostat, plug or sensor behind the hub (temperature, valve setpoint, battery, luminance, motion, output). From Gladys: a setpoint (an override for the configured duration), the modes (timer, footprint, override), the hot water, an on/off zone. Setpoint and mode commands are off by default; \"Off\" needs no option. Never tested with a real Genius Hub.",
+        "fr": "Connecteur non officiel, sans lien avec Genius Hub (Heat Genius). Il lit un Genius Hub par son API locale (port 1223 du hub, sans cloud) : un appareil par zone (pièce à radiateurs, plancher chauffant, eau chaude, minuterie marche/arrêt) avec sa température, sa consigne, ses modes, la demande de chauffe, la dérogation et les anomalies, et un appareil en lecture seule par vanne de radiateur, thermostat, prise ou capteur relié au hub (température, consigne de la vanne, batterie, luminosité, mouvement, sortie). Depuis Gladys : une consigne (une dérogation pour la durée configurée), les modes (timer, footprint, dérogation), l'eau chaude, une zone marche/arrêt. Les commandes de consigne et de mode sont désactivées par défaut ; « Arrêt » n'a pas besoin d'option. Jamais testé avec un vrai Genius Hub."
       },
       "links": [
         {
-          "url": "https://open-meteo.com/en/docs",
-          "label": { "en": "Open-Meteo documentation", "fr": "Documentation Open-Meteo" }
+          "url": "https://github.com/LM1LC3N7/gladys-genius-hub/blob/main/docs/fr.md",
+          "label": { "en": "Guide (French)", "fr": "Guide (français)" }
+        },
+        {
+          "url": "https://github.com/LM1LC3N7/gladys-genius-hub/blob/main/docs/en.md",
+          "label": { "en": "Guide (English)", "fr": "Guide (anglais)" }
         }
       ]
     },
     {
-      "key": "latitude",
-      "type": "number",
-      "label": { "en": "Latitude", "fr": "Latitude" },
-      "description": {
-        "en": "Latitude used for the demo weather sensor.",
-        "fr": "Latitude utilisée par le capteur météo de démonstration."
-      },
-      "placeholder": { "en": "e.g. 48.8566", "fr": "ex. 48.8566" },
+      "key": "address",
+      "type": "string",
       "required": true,
-      "default": 48.8566,
-      "min": -90,
-      "max": 90
+      "label": { "en": "Hub address", "fr": "Adresse du hub" },
+      "description": {
+        "en": "The IP address of the Genius Hub on your network (shown by your router or in the Genius Hub app, Settings > Hub), with a port only if it is not 1223. Preferably give it a fixed address in your router.",
+        "fr": "L'adresse IP du Genius Hub sur votre réseau (visible dans votre box ou dans l'application Genius Hub, Réglages > Hub), avec un port seulement s'il n'est pas 1223. Donnez-lui de préférence une adresse fixe dans votre box."
+      },
+      "placeholder": { "en": "e.g. 192.168.1.50", "fr": "ex. 192.168.1.50" }
     },
     {
-      "key": "longitude",
-      "type": "number",
-      "label": { "en": "Longitude", "fr": "Longitude" },
-      "description": {
-        "en": "Longitude used for the demo weather sensor.",
-        "fr": "Longitude utilisée par le capteur météo de démonstration."
-      },
-      "placeholder": { "en": "e.g. 2.3522", "fr": "ex. 2.3522" },
+      "key": "username",
+      "type": "string",
       "required": true,
-      "default": 2.3522,
-      "min": -180,
-      "max": 180
-    },
-    {
-      "key": "unit",
-      "type": "select",
-      "label": { "en": "Temperature unit", "fr": "Unité de température" },
-      "required": false,
-      "default": "celsius",
-      "options": [
-        { "value": "celsius", "label": { "en": "Celsius", "fr": "Celsius" } },
-        { "value": "fahrenheit", "label": { "en": "Fahrenheit", "fr": "Fahrenheit" } }
-      ]
-    },
-    {
-      "key": "poll_frequency",
-      "type": "number",
-      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "label": { "en": "Hub user name", "fr": "Nom d'utilisateur du hub" },
       "description": {
-        "en": "How often sensors are polled, in seconds (one minute minimum).",
-        "fr": "Fréquence d'interrogation des capteurs, en secondes (une minute minimum)."
-      },
+        "en": "The user name of the hub itself (the one of its local web interface, not the my.geniushub.co.uk account).",
+        "fr": "Le nom d'utilisateur du hub lui-même (celui de son interface web locale, pas le compte my.geniushub.co.uk)."
+      }
+    },
+    {
+      "key": "password",
+      "type": "secret",
+      "required": true,
+      "label": { "en": "Hub password", "fr": "Mot de passe du hub" },
+      "description": {
+        "en": "The password of that user. Kept by Gladys in its database, never shown again, never logged, sent only to the hub address above (plain HTTP on your network, as the hub asks, as a hash). If the hub refuses it, reads stop until you change it or click \"Test the connection\".",
+        "fr": "Le mot de passe de cet utilisateur. Gardé par Gladys dans sa base, jamais réaffiché, jamais écrit dans les journaux, envoyé seulement à l'adresse du hub ci-dessus (en HTTP simple sur votre réseau, comme le hub le demande, sous forme de hachage). Si le hub le refuse, les lectures s'arrêtent jusqu'à ce que vous le changiez ou cliquiez sur « Tester la connexion »."
+      }
+    },
+    {
+      "key": "poll_interval",
+      "type": "number",
       "required": false,
-      "default": 300,
+      "default": 60,
       "min": 60,
-      "max": 3600
+      "max": 3600,
+      "label": { "en": "Read interval (s)", "fr": "Intervalle de lecture (s)" },
+      "description": {
+        "en": "Seconds between two reads of the hub (60 by default, never less).",
+        "fr": "Secondes entre deux lectures du hub (60 par défaut, jamais moins)."
+      }
+    },
+    {
+      "key": "override_duration",
+      "type": "number",
+      "required": false,
+      "default": 60,
+      "min": 10,
+      "max": 1440,
+      "label": { "en": "Override duration (min)", "fr": "Durée d'une dérogation (min)" },
+      "description": {
+        "en": "A setpoint or an \"on\" sent from Gladys is an override of the zone for this many minutes (60 by default, the hour of the app's boost); the zone then goes back to its timer or mode.",
+        "fr": "Une consigne ou une « marche » envoyée depuis Gladys est une dérogation de la zone pendant ce nombre de minutes (60 par défaut, l'heure du boost de l'application) ; la zone revient ensuite à son timer ou à son mode."
+      }
+    },
+    {
+      "key": "allow_setpoint",
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "label": { "en": "Allow the setpoint commands", "fr": "Autoriser les commandes de consigne" },
+      "description": {
+        "en": "Off by default. Off: every room or hot water setpoint sent from Gladys is refused.",
+        "fr": "Désactivé par défaut. Désactivé : toute consigne de pièce ou d'eau chaude envoyée depuis Gladys est refusée."
+      }
+    },
+    {
+      "key": "allow_modes",
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "label": {
+        "en": "Allow the mode and on commands",
+        "fr": "Autoriser les commandes de mode et de marche"
+      },
+      "description": {
+        "en": "Off by default. Off: the thermostat mode \"Heating\", the Genius modes (timer, footprint, override), the hot water timer and boost and \"on\" of an on/off zone are refused. \"Off\" needs no option (see the guide for its refusal cases).",
+        "fr": "Désactivé par défaut. Désactivé : le mode de thermostat « Chauffage », les modes Genius (timer, footprint, dérogation), le timer et le boost de l'eau chaude et la « marche » d'une zone marche/arrêt sont refusés. « Arrêt » n'a pas besoin d'option (voir le guide pour ses cas de refus)."
+      }
+    },
+    {
+      "key": "max_setpoint",
+      "type": "number",
+      "required": false,
+      "default": 25,
+      "min": 4,
+      "max": 28,
+      "label": { "en": "Highest room setpoint (°C)", "fr": "Consigne de pièce la plus haute (°C)" },
+      "description": {
+        "en": "A room setpoint above this is refused (25 °C by default; 28 °C is the most the hub takes).",
+        "fr": "Une consigne de pièce au-dessus est refusée (25 °C par défaut ; 28 °C est le maximum du hub)."
+      }
+    },
+    {
+      "key": "max_hot_water",
+      "type": "number",
+      "required": false,
+      "default": 55,
+      "min": 30,
+      "max": 60,
+      "label": {
+        "en": "Highest hot water setpoint (°C)",
+        "fr": "Consigne d'eau chaude la plus haute (°C)"
+      },
+      "description": {
+        "en": "A hot water setpoint above this is refused (55 °C by default, 60 °C at most: scalding).",
+        "fr": "Une consigne d'eau chaude au-dessus est refusée (55 °C par défaut, 60 °C au plus : brûlures)."
+      }
     }
   ],
   "actions": [
     {
-      "key": "test_weather",
-      "label": { "en": "Test the weather provider", "fr": "Tester le fournisseur météo" },
-      "timeout_seconds": 30
-    },
-    {
-      "key": "identify",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ]
-    }
-  ],
-  "scene_triggers": [
-    {
-      "key": "motion_detected",
-      "label": { "en": "Motion detected", "fr": "Mouvement détecté" },
+      "key": "test_connection",
+      "timeout_seconds": 60,
+      "label": { "en": "Test the connection", "fr": "Tester la connexion" },
       "description": {
-        "en": "A demo motion sensor saw a person or an animal move.",
-        "fr": "Un détecteur de démonstration a vu bouger une personne ou un animal."
-      },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Sensor", "fr": "Détecteur" }
-        },
-        {
-          "key": "target",
-          "type": "multi_select",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" },
-          "options": [
-            { "value": "person", "label": { "en": "Person", "fr": "Personne" } },
-            { "value": "animal", "label": { "en": "Animal", "fr": "Animal" } }
-          ]
-        }
-      ],
-      "variables": [
-        {
-          "key": "target",
-          "type": "string",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" }
-        }
-      ]
-    }
-  ],
-  "scene_actions": [
-    {
-      "key": "identify_device",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "description": {
-        "en": "Make a device signal itself (the demo light blinks).",
-        "fr": "Fait se signaler un appareil (la lampe de démonstration clignote)."
-      },
-      "timeout_seconds": 15,
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ],
-      "outputs": [
-        {
-          "key": "signalled",
-          "type": "boolean",
-          "label": { "en": "Device signalled", "fr": "Appareil signalé" }
-        }
-      ]
-    }
-  ],
-  "widgets": [
-    {
-      "key": "demo_status",
-      "label": { "en": "Demo status", "fr": "État de la démo" },
-      "description": {
-        "en": "Live temperature and plug power, plug connection and observed location.",
-        "fr": "Température et puissance en direct, connexion de la prise, position observée."
-      },
-      "icon": "activity",
-      "action_timeout_seconds": 15
+        "en": "Reads the hub once when a read is due (never more than one per read interval), otherwise tells the last read: the hub, its zones with their mode and temperatures, the number of devices. After a refused login, it tries once more.",
+        "fr": "Lit le hub une fois quand une lecture est due (jamais plus d'une par intervalle de lecture), sinon donne la dernière lecture : le hub, ses zones avec leur mode et leurs températures, le nombre d'appareils. Après des identifiants refusés, il réessaie une fois."
+      }
     }
   ]
 }

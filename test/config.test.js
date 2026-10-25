@@ -1,33 +1,89 @@
+// -----------------------------------------------------------------------------
+// The configuration normalized: the address, the login, the pace, the
+// options and the ceilings.
+// -----------------------------------------------------------------------------
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeConfig, DEFAULT_CONFIG } from '../src/config.js';
+import { isComplete, normalizeConfig, parseAddress } from '../src/config.js';
 
-test('normalizeConfig returns the defaults when called with no argument', () => {
-  assert.deepEqual(normalizeConfig(), DEFAULT_CONFIG);
+test('the address: host, port, pasted URL, IPv6, refused forms', () => {
+  assert.deepEqual(parseAddress(' 192.168.1.50 '), { address: '192.168.1.50' });
+  assert.deepEqual(parseAddress('http://192.168.1.50:1223/v3/zones'), {
+    address: '192.168.1.50:1223',
+  });
+  assert.deepEqual(parseAddress('Hub.Local:8080'), { address: 'hub.local:8080' });
+  assert.deepEqual(parseAddress('[fe80::1]:1223'), { address: '[fe80::1]:1223' });
+  assert.deepEqual(parseAddress('fe80::1'), { address: '[fe80::1]' });
+  assert.deepEqual(parseAddress(''), { address: '' });
+  assert.deepEqual(parseAddress('user:pw@host'), { error: 'invalid' });
+  assert.deepEqual(parseAddress('host:70000'), { error: 'invalid' });
+  assert.deepEqual(parseAddress('bad host'), { error: 'invalid' });
 });
 
-test('normalizeConfig keeps user values over the defaults', () => {
-  const config = normalizeConfig({ latitude: 45.5, longitude: -73.6, unit: 'fahrenheit' });
-  assert.equal(config.latitude, 45.5);
-  assert.equal(config.longitude, -73.6);
-  assert.equal(config.unit, 'fahrenheit');
+test('the defaults, the bounds, the flags', () => {
+  const config = normalizeConfig({ address: '192.168.1.50', username: 'u', password: 'p' });
+  assert.equal(config.pollInterval, 60);
+  assert.equal(config.overrideMinutes, 60);
+  assert.equal(config.allowSetpoint, false);
+  assert.equal(config.allowModes, false);
+  assert.equal(config.maxSetpoint, 25);
+  assert.equal(config.maxHotWater, 55);
+  assert.ok(isComplete(config));
+  const set = normalizeConfig({
+    address: '192.168.1.50',
+    username: 'u',
+    password: 'p',
+    poll_interval: '120',
+    override_duration: 30,
+    allow_setpoint: 'true',
+    allow_modes: true,
+    max_setpoint: 22.5,
+    max_hot_water: '50',
+  });
+  assert.equal(set.pollInterval, 120);
+  assert.equal(set.overrideMinutes, 30);
+  assert.equal(set.allowSetpoint, true);
+  assert.equal(set.allowModes, true);
+  assert.equal(set.maxSetpoint, 22.5);
+  assert.equal(set.maxHotWater, 50);
+  const out = normalizeConfig({
+    poll_interval: 10,
+    override_duration: 5000,
+    max_setpoint: 40,
+    max_hot_water: 70,
+    allow_setpoint: 'yes',
+  });
+  assert.equal(out.pollInterval, 60);
+  assert.equal(out.overrideMinutes, 60);
+  assert.equal(out.maxSetpoint, 25);
+  assert.equal(out.maxHotWater, 55, 'never above 60, the default when out of bounds');
+  assert.equal(out.allowSetpoint, false);
+  assert.equal(normalizeConfig({ max_hot_water: 60 }).maxHotWater, 60);
+  assert.equal(normalizeConfig({ max_hot_water: 61 }).maxHotWater, 55);
+  assert.equal(normalizeConfig({ max_hot_water: 55.5 }).maxHotWater, 55, 'whole degrees');
 });
 
-test('normalizeConfig coerces numeric strings coming from a form', () => {
-  const config = normalizeConfig({ latitude: '48.8', longitude: '2.3', poll_frequency: '600' });
-  assert.equal(config.latitude, 48.8);
-  assert.equal(config.longitude, 2.3);
-  assert.equal(config.poll_frequency, 600);
-  assert.equal(typeof config.poll_frequency, 'number');
-});
-
-test('normalizeConfig falls back to the default for a missing numeric field', () => {
-  const config = normalizeConfig({ unit: 'celsius' });
-  assert.equal(config.poll_frequency, DEFAULT_CONFIG.poll_frequency);
-});
-
-test('GLADYS_PREFER_LOCAL defaults to true and only an explicit false disables it', () => {
-  assert.equal(normalizeConfig().GLADYS_PREFER_LOCAL, true);
-  assert.equal(normalizeConfig({ GLADYS_PREFER_LOCAL: true }).GLADYS_PREFER_LOCAL, true);
-  assert.equal(normalizeConfig({ GLADYS_PREFER_LOCAL: false }).GLADYS_PREFER_LOCAL, false);
+test('the login: both fields, no ":" in the user name, no control byte; incomplete forms', () => {
+  assert.equal(normalizeConfig({ address: 'h' }).login, null);
+  assert.ok(!isComplete(normalizeConfig({ address: 'h' })));
+  const half = normalizeConfig({ address: 'h', username: 'u' });
+  assert.equal(half.login, null);
+  assert.equal(half.invalidLogin, true);
+  assert.equal(
+    normalizeConfig({ address: 'h', username: 'a:b', password: 'p' }).invalidLogin,
+    true,
+  );
+  assert.equal(
+    normalizeConfig({ address: 'h', username: 'u', password: 'p\r\n' }).invalidLogin,
+    true,
+  );
+  assert.equal(
+    normalizeConfig({ address: 'h', username: 'u', password: 'x'.repeat(129) }).invalidLogin,
+    true,
+  );
+  const bad = normalizeConfig({ address: 'bad host', username: 'u', password: 'p' });
+  assert.equal(bad.address, '');
+  assert.equal(bad.invalidAddress, true);
+  assert.ok(!isComplete(bad));
 });
