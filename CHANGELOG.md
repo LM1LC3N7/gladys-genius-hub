@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-26
+
 ### Added
 
 - First version: a Genius Hub read through its local API v3 (port 1223, no
@@ -49,3 +51,6 @@ the notes of the version's GitHub Release.
   two at most in flight; a read-back still showing the state of before is
   read once more 0.5 s later; one follow-up read per due time; an "Off"
   ends the check of a command left unconfirmed.
+
+[Unreleased]: https://github.com/LM1LC3N7/gladys-genius-hub/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-genius-hub/releases/tag/v0.1.1
