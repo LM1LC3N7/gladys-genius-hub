@@ -701,26 +701,43 @@ test('r1-2: a setpoint applied at another value is a failure; beyond the bounds 
   assert.match(start.error, /"Off" was sent to this zone just before/);
 });
 
-test('r1-2: a mode the hub does not apply is a failure', async () => {
+test('r1-2/r2-1: a command the hub does not apply: not confirmed at once, said by the 20 s follow-up', async () => {
   const hub = createHub();
-  const { set } = await setup({ hub, devices: [createdZone()], config: ALLOWED });
+  const { set, wait, gladys } = await setup({ hub, devices: [createdZone()], config: ALLOWED });
   hub.apply = false;
   const ack = await set(Z(1, 'zone-mode'), 'footprint');
   assert.equal(ack.success, false);
-  assert.match(ack.error, /shows the zone in mode "timer" instead of "footprint"/);
+  assert.match(
+    ack.error,
+    /not shown yet by the zone read back: the reads of 5 s and 20 s check it/,
+  );
+  await wait(5 * SECOND);
+  assert.doesNotMatch(gladys.fake.connectionStatus.message.en, /not applied/);
+  await wait(15 * SECOND);
+  assert.match(
+    gladys.fake.connectionStatus.message.en,
+    /last command of zone Lounge was accepted by the hub but not applied within 20 s/,
+  );
+  assert.equal(offs(hub, ZONE.LOUNGE), 0, 'nothing turned off');
 });
 
-test('r1-2: no read-back in time is not a confirmation', async () => {
-  let slow = false;
+test('r1-2: a mode applied otherwise is a failure at once', async () => {
   const hub = createHub((path, t, init) => {
-    if (slow && path === '/v3/zones' && init.method === 'GET') {
-      slow = false;
-      return 'timeout';
+    if (init.method === 'PATCH') {
+      hub.patches.push({ path, body: JSON.parse(init.body) });
+      zoneOf(hub, ZONE.LOUNGE).iMode = 8;
+      return { error: 0 };
     }
     return undefined;
   });
   const { set } = await setup({ hub, devices: [createdZone()], config: ALLOWED });
-  hub.net.calls.length = 0;
+  const ack = await set(Z(1, 'zone-mode'), 'footprint');
+  assert.match(ack.error, /shows the zone in mode "away" instead of "footprint"/);
+});
+
+test('r1-2: no read-back in time is not a confirmation', async () => {
+  const hub = createHub();
+  const { set } = await setup({ hub, devices: [createdZone()], config: ALLOWED });
   const original = hub.world;
   let patched = false;
   hub.world = async (path, t, init) => {
@@ -730,7 +747,7 @@ test('r1-2: no read-back in time is not a confirmation', async () => {
   };
   const ack = await set(Z(1, 'setpoint'), 20);
   assert.equal(ack.success, false);
-  assert.match(ack.error, /could not be read back in time/);
+  assert.match(ack.error, /not shown yet by the zone read back/);
   const off = await set(Z(1, 'heating-mode'), 0);
   assert.equal(off.success, false);
   assert.match(
@@ -739,7 +756,7 @@ test('r1-2: no read-back in time is not a confirmation', async () => {
   );
 });
 
-test('r1-2: "Off" accepted but not applied: a failure, the status says so, written again 3 times', async () => {
+test('r1-2: "Off" accepted but not applied: the follow-ups say so and write it again 3 times', async () => {
   const hub = createHub();
   const { set, wait, gladys, lines } = await setup({
     hub,
@@ -749,21 +766,129 @@ test('r1-2: "Off" accepted but not applied: a failure, the status says so, writt
   hub.apply = false;
   const off = await set(Z(1, 'heating-mode'), 0);
   assert.equal(off.success, false);
-  assert.match(off.error, /accepted "Off" but still shows the zone in mode "timer"/);
   assert.match(
-    gladys.fake.connectionStatus.message.en,
-    /"Off" did not take effect on zone\(s\) Lounge/,
+    off.error,
+    /read back right after still shows mode "timer": the reads of 5 s and 20 s check it/,
   );
-  assert.ok(lines.some((l) => l.includes('"off" not applied')));
+  assert.doesNotMatch(gladys.fake.connectionStatus.message.en, /did not take effect/, 'not yet');
+  assert.equal(offs(hub, ZONE.LOUNGE), 1);
   const start = await set(Z(1, 'zone-mode'), 'timer');
   assert.match(start.error, /"Off" was sent to this zone just before/);
   await wait(5 * SECOND);
   assert.equal(offs(hub, ZONE.LOUNGE), 2, 'written again at the follow-up');
+  assert.match(
+    gladys.fake.connectionStatus.message.en,
+    /"Off" did not take effect on zone\(s\) Lounge/,
+  );
+  assert.ok(lines.some((l) => l.includes('still on, "off" written again')));
   await wait(2 * MINUTE);
   assert.equal(offs(hub, ZONE.LOUNGE), 4, '3 times at most');
   hub.apply = true;
   await wait(MINUTE);
   assert.doesNotMatch(gladys.fake.connectionStatus.message.en, /did not take effect/);
+});
+
+test('r2-1: a hub applying 300 ms after its answer: a setpoint over an app boost at 28 °C is confirmed at 5 s, never turned off', async () => {
+  const hub = createHub();
+  Object.assign(zoneOf(hub, ZONE.LOUNGE), {
+    iMode: 16,
+    fBoostSP: 28,
+    fSP: 28,
+    iBoostTimeRemaining: 7200,
+  });
+  const { set, wait, gladys } = await setup({ hub, devices: [createdZone()], config: ALLOWED });
+  hub.applyAfter = 300;
+  const ack = await set(Z(1, 'setpoint'), 22);
+  assert.equal(ack.success, false);
+  assert.match(ack.error, /not shown yet by the zone read back/);
+  assert.equal(offs(hub, ZONE.LOUNGE), 0, 'no "Off" on the state of before');
+  await wait(5 * SECOND);
+  assert.equal(gladys.fake.lastState(Z(1, 'setpoint')), 22);
+  assert.equal(offs(hub, ZONE.LOUNGE), 0);
+  await wait(15 * SECOND);
+  assert.doesNotMatch(gladys.fake.connectionStatus.message.en, /not applied|outside the bounds/);
+  await wait(SECOND);
+  assert.equal((await set(Z(1, 'zone-mode'), 'timer')).success, false, 'still pending at once');
+  await wait(5 * SECOND);
+  assert.equal(zoneOf(hub, ZONE.LOUNGE).iMode, 2, 'no guard: the next command left');
+});
+
+test('r2-1/r2-3: a value beyond the bounds seen only at the 5 s follow-up turns the zone off, with its own note', async () => {
+  const hub = createHub((path, t, init) => {
+    if (init.method === 'PATCH') {
+      const body = JSON.parse(init.body);
+      hub.patches.push({ path, body });
+      hub.late.push({
+        due: t + 300,
+        id: 1,
+        body: body.iMode === 1 ? body : { ...body, fBoostSP: 28, iBoostTimeRemaining: 7200 },
+      });
+      return { error: 0 };
+    }
+    return undefined;
+  });
+  hub.applyAfter = 300;
+  const { set, wait, gladys } = await setup({ hub, devices: [createdZone()], config: ALLOWED });
+  const ack = await set(Z(1, 'setpoint'), 22);
+  assert.match(ack.error, /not shown yet/);
+  assert.equal(offs(hub, ZONE.LOUNGE), 0);
+  await wait(5 * SECOND);
+  assert.equal(offs(hub, ZONE.LOUNGE), 1, '"Off" at the follow-up');
+  assert.match(
+    gladys.fake.connectionStatus.message.en,
+    /The hub applied 28 °C for 120 min on zone Lounge, outside the bounds of the integration: "Off" sent and kept/,
+  );
+  assert.doesNotMatch(gladys.fake.connectionStatus.message.en, /may still be applied/);
+});
+
+test('r2-1: "Off" applied 300 ms late: no failure note, no rewrite, the guard lifted by the follow-up', async () => {
+  const hub = createHub();
+  const { set, wait, gladys } = await setup({ hub, devices: [createdZone()], config: ALLOWED });
+  hub.applyAfter = 300;
+  const off = await set(Z(1, 'heating-mode'), 0);
+  assert.match(off.error, /still shows mode "timer"/);
+  await wait(5 * SECOND);
+  assert.equal(offs(hub, ZONE.LOUNGE), 1, 'not written again');
+  assert.doesNotMatch(gladys.fake.connectionStatus.message.en, /did not take effect/);
+  hub.applyAfter = 0;
+  const heat = await set(Z(1, 'heating-mode'), 1);
+  assert.equal(heat.success, true, heat.error);
+});
+
+test('r2-2: commands arriving one after the other: one fresh read in flight at a time', async () => {
+  let inFlight = 0;
+  let most = 0;
+  const hub = createHub(async (path, t, init) => {
+    if (path === '/v3/auth/release' && init.method === 'GET') {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      inFlight -= 1;
+    }
+    return undefined;
+  });
+  const ids = [ZONE.LOUNGE, ZONE.KITCHEN, ZONE.FLOOR];
+  const { gladys, app } = await setup({
+    hub,
+    devices: ids.map((id) => createdZone(id)),
+    config: ALLOWED,
+  });
+  most = 0;
+  const acks = [];
+  for (const id of ids) {
+    const device = gladys.fake.devices.find((d) => d.external_id === Z(id));
+    const feature = device.features.find((f) => f.external_id === Z(id, 'setpoint'));
+    acks.push(gladys.fake.setValue(device, feature, 22));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  const results = await Promise.all(acks);
+  await app.idle();
+  assert.deepEqual(
+    results.map((r) => r.success),
+    [true, true, true],
+    JSON.stringify(results),
+  );
+  assert.equal(most, 1, 'never two fresh reads at once');
 });
 
 test('"Off" goes through a pause and past a refused login (one try); other commands are refused then', async () => {

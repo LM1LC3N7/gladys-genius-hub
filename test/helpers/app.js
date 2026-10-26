@@ -78,6 +78,9 @@ export function createHub(intercept) {
     clock: { now: NOW },
     patches: [],
     apply: true,
+    /** A hub applying its PATCHes this long (virtual ms) after its answer. */
+    applyAfter: 0,
+    late: [],
     state: { zones: zones(), devices: devices(), uid: UID },
   };
   hub.world = async (path, t, init) => {
@@ -87,9 +90,18 @@ export function createHub(intercept) {
       const body = JSON.parse(init.body);
       const id = Number(path.split('/').pop());
       hub.patches.push({ path, body, at: t });
-      if (hub.apply) applyPatch(hub.state.zones, id, body);
+      if (hub.apply && hub.applyAfter > 0) {
+        hub.late.push({ due: t + hub.applyAfter, id, body });
+      } else if (hub.apply) {
+        applyPatch(hub.state.zones, id, body);
+      }
       return patchOk();
     }
+    // The PATCHes applied late, from their time on.
+    for (const late of hub.late.filter((l) => l.due <= t)) {
+      applyPatch(hub.state.zones, late.id, late.body);
+    }
+    hub.late = hub.late.filter((l) => l.due > t);
     if (path === '/v3/auth/release') return releasePage(hub.state.uid);
     if (path === '/v3/zones') return zonesPage(hub.state.zones);
     if (path === '/v3/data_manager') return dataManagerPage(hub.state.devices);

@@ -154,6 +154,14 @@ export const T = {
     fr: `La configuration de l’intégration n’a pas pu être lue depuis Gladys : nouvel essai dans ${delay(wait).fr}.`,
   }),
   notes: {
+    outOfBounds: (name, { setpoint, left }) => ({
+      en: `The hub applied ${setpoint ?? '?'} °C for ${Math.round(left / 60)} min on zone ${name}, outside the bounds of the integration: "Off" sent and kept for two minutes.`,
+      fr: `Le hub a appliqué ${setpoint ?? '?'} °C pendant ${Math.round(left / 60)} min sur la zone ${name}, hors des bornes de l’intégration : « Arrêt » envoyé et maintenu pendant deux minutes.`,
+    }),
+    notApplied: (name) => ({
+      en: `The last command of zone ${name} was accepted by the hub but not applied within 20 s.`,
+      fr: `La dernière commande de la zone ${name} a été acceptée par le hub mais pas appliquée en 20 s.`,
+    }),
     offFailed: (names, resends) => ({
       en: `"Off" did not take effect on zone(s) ${list(names)}: the hub shows them on; it is written again (${resends} times at most within two minutes).`,
       fr: `« Arrêt » n’a pas pris effet sur la ou les zones ${list(names)} : le hub les montre en marche ; il est réécrit (${resends} fois au plus en deux minutes).`,
@@ -266,8 +274,8 @@ export const T = {
       fr: `La consigne actuelle de la zone (${value ?? '?'} °C) est hors des bornes de l’intégration (${low} à ${high} °C) : rien envoyé. Envoyez plutôt une consigne.`,
     }),
     sentUnchecked: {
-      en: 'Command sent and accepted by the hub, but the zone could not be read back in time: the reads of 5 s and 20 s tell whether it was applied.',
-      fr: 'Commande envoyée et acceptée par le hub, mais la zone n’a pas pu être relue à temps : les relectures à 5 s et 20 s diront si elle est appliquée.',
+      en: 'Command sent and accepted by the hub, not shown yet by the zone read back: the reads of 5 s and 20 s check it (the status tells if it is not applied or applied otherwise).',
+      fr: 'Commande envoyée et acceptée par le hub, pas encore visible à la relecture de la zone : les relectures à 5 s et 20 s la vérifient (l’état dit si elle n’est pas appliquée ou appliquée autrement).',
     },
     modeNotApplied: (shown, wanted) => ({
       en: `The hub accepted the command but shows the zone in mode "${shown}" instead of "${wanted}".`,
@@ -285,9 +293,9 @@ export const T = {
       en: '"Off" sent and accepted by the hub, but the zone could not be read back in time: the next reads check it and write it again if needed.',
       fr: '« Arrêt » envoyé et accepté par le hub, mais la zone n’a pas pu être relue à temps : les prochaines relectures le vérifient et le réécrivent si besoin.',
     },
-    offNotApplied: (shown) => ({
-      en: `The hub accepted "Off" but still shows the zone in mode "${shown}": it is written again by the next reads.`,
-      fr: `Le hub a accepté « Arrêt » mais montre encore la zone en mode « ${shown} » : il est réécrit par les prochaines relectures.`,
+    offPending: (shown) => ({
+      en: `"Off" sent and accepted by the hub, but the zone read back right after still shows mode "${shown}": the reads of 5 s and 20 s check it and write it again if the zone still shows on.`,
+      fr: `« Arrêt » envoyé et accepté par le hub, mais la zone relue juste après montre encore le mode « ${shown} » : les relectures à 5 s et 20 s le vérifient et le réécrivent si la zone est encore en marche.`,
     }),
     tooSlow: {
       en: 'The hub was too slow to answer before the command: nothing sent.',

@@ -100,12 +100,17 @@ rythme, les zones sont aussi lues : juste avant et juste après une commande,
   - le hub la rejette (numéro d'erreur dans le message) : non appliquée ;
   - le hub ne répond pas, ou répond une erreur serveur : « envoyée, sans
     confirmation » ;
-  - la zone ne peut pas être relue à temps : « envoyée, les relectures à
-    5 s et 20 s diront » ;
+  - la zone ne peut pas être relue à temps, ou la relecture la montre encore
+    comme avant la commande (le hub peut appliquer un peu après sa
+    réponse) : « pas encore visible ». Les relectures à 5 s et 20 s la
+    vérifient alors : l'état dit si la commande n'est pas appliquée à 20 s
+    ou appliquée avec une autre valeur, et une nouvelle valeur hors bornes
+    arrête la zone ;
   - la zone relue montre un autre mode, ou une autre consigne (« le hub a
     appliqué X au lieu de Y ») ;
-  - la zone relue montre une consigne ou une durée hors des bornes de
-    l'intégration : « Arrêt » est alors envoyé aussitôt à la zone.
+  - la zone relue montre une nouvelle consigne ou durée hors des bornes de
+    l'intégration : « Arrêt » est alors envoyé aussitôt à la zone, maintenu
+    deux minutes, et l'état dit ce que le hub a appliqué.
 
 - **« Arrêt »** (mode du thermostat, mode Genius, mode eau chaude ou état
   marche/arrêt) n'a pas besoin d'option, ne fait pas de lecture fraîche,
@@ -128,11 +133,12 @@ rythme, les zones sont aussi lues : juste avant et juste après une commande,
   - le hub ne répond pas, ou répond une erreur serveur : « envoyé, sans
     confirmation » ;
   - la zone ne peut pas être relue à temps ;
-  - la zone relue est encore en marche.
+  - la zone relue juste après est encore en marche (le hub peut appliquer
+    un peu après sa réponse).
 
   Dans les trois derniers cas, et après tout « Arrêt » accepté par le hub,
-  la zone est vérifiée pendant deux minutes : tant qu'une lecture la montre
-  en marche, « Arrêt » est réécrit (3 fois au plus), l'état dit « Arrêt n'a
+  la zone est vérifiée pendant deux minutes : tant qu'une relecture de suivi
+  (5 s, 20 s, puis toutes les 20 s) la montre en marche, « Arrêt » est réécrit (3 fois au plus), l'état dit « Arrêt n'a
   pas pris effet », et aucune commande qui relancerait la zone n'est prise.
   Une lecture qui montre la zone arrêtée termine la vérification, sauf
   quand une consigne ou un mode de la zone est parti moins de 2 min avant

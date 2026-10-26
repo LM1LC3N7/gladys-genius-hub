@@ -171,6 +171,10 @@ export const COMMAND = {
   tolerance: 0.05,
   /** A read-back may show this much more override time than written (s). */
   overrideSlack: 60,
+  /** A command not shown by the read-back is concluded by the follow-up of 20 s (or a later read). */
+  checkWithin: 19 * SECOND,
+  /** A note of the status about a command lasts this long. */
+  noteFor: 10 * MINUTE,
 };
 
 /** A page refused to the login (401/403 on the zones or the devices): tried again, doubled up to 1 h. */

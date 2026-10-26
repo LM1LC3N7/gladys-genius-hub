@@ -41,3 +41,8 @@ the notes of the version's GitHub Release.
 - The fresh read of a command no longer waits behind a periodic read and
   checks the identity of the hub; a zone on the outside temperature
   publishes no temperature; a device channel takes the age of its node.
+- A hub applying a command a little after its answer is no longer taken
+  for a failure: the follow-up reads of 5 s and 20 s confirm the command,
+  say when it was not applied or applied otherwise, and turn the zone off
+  only for a new value beyond the bounds (with a status note of its own);
+  one fresh read of the hub at a time for the commands.

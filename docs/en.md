@@ -93,12 +93,16 @@ at most, after a restart of the integration too).
   - the hub rejects it (error number in the message): not applied;
   - the hub does not answer, or answers a server error: "sent, without
     confirmation";
-  - the zone cannot be read back in time: "sent, the reads of 5 s and 20 s
-    tell";
+  - the zone cannot be read back in time, or the read-back still shows the
+    zone as it was before the command (the hub may apply a little after its
+    answer): "not shown yet". The reads of 5 s and 20 s then check it: the
+    status says when the command was not applied by 20 s or applied with
+    another value, and a new value beyond the bounds turns the zone off;
   - the zone read back shows another mode, or another setpoint ("the hub
     applied X instead of Y");
-  - the zone read back shows a setpoint or a duration beyond the bounds of
-    the integration: "Off" is then sent to the zone at once.
+  - the zone read back shows a new setpoint or duration beyond the bounds
+    of the integration: "Off" is then sent to the zone at once, kept for
+    two minutes, and the status says what the hub applied.
 
 - **"Off"** (thermostat mode, Genius mode, hot water mode or on/off state)
   needs no option, makes no fresh read, goes through a pause and past a
@@ -119,11 +123,13 @@ at most, after a restart of the integration too).
   - the hub does not answer, or answers a server error: "sent, without
     confirmation";
   - the zone cannot be read back in time;
-  - the zone read back is still on.
+  - the zone read back right after still shows it on (the hub may apply a
+    little after its answer).
 
   In the last three cases, and after every "Off" the hub accepted, the zone
-  is checked for two minutes: while a read shows it on, "Off" is written
-  again (3 times at most), the status says "Off did not take effect", and
+  is checked for two minutes: while a follow-up read (5 s, 20 s, then every
+  20 s) shows it on, "Off" is written again (3 times at most), the status
+  says "Off did not take effect", and
   no command that would start the zone is taken. A read showing the zone
   off ends the check, except when a setpoint or a mode of the zone left
   less than 2 min before the "Off" (the hub may still apply it after): the

@@ -239,6 +239,13 @@ function validGuards(guards, now, mono) {
           : 0,
       sticky: value.sticky === true,
       failed: value.failed === true,
+      outOfBounds:
+        value.outOfBounds && typeof value.outOfBounds === 'object' && finite(value.outOfBounds.left)
+          ? {
+              setpoint: finite(value.outOfBounds.setpoint) ? value.outOfBounds.setpoint : undefined,
+              left: value.outOfBounds.left,
+            }
+          : undefined,
     });
   }
   return kept;
@@ -298,8 +305,12 @@ export class GeniusHubApp {
     this.stopEpoch = new Map();
     /** The follow-up reads: `{ timer, due: [monotonic...] }`. */
     this.follow = { timer: undefined, due: [] };
-    /** The fresh read of the commands not departed yet: `{ session, departed, readBy, promise }`. */
+    /** The fresh read of the commands: `{ session, departed, settled, readBy, promise }`. */
     this.fresh = undefined;
+    /** zone id -> a command not confirmed yet: `{ command, body, before, due (monotonic) }`. */
+    this.checks = new Map();
+    /** zone id -> a note of the status about a command: `{ text(name), due (monotonic) }`. */
+    this.notes = new Map();
     /** The configuration read from Gladys at least once: until then, "Off" waits for it. */
     this.loaded = false;
     this.ready = new Promise((resolve) => {
@@ -728,6 +739,8 @@ export class GeniusHubApp {
     if (result.devices) {
       this.publishDevices(result.devices, result.at ?? this.now());
     }
+    await this.evaluateChecks(result.zones, this.monotonic(), this.session);
+    if (gone()) return;
     await this.enforceGuards(result.zones, mono, gone);
     if (gone()) return;
     await this.saveState();
@@ -813,14 +826,22 @@ export class GeniusHubApp {
     const name = (id) => this.zones.find((z) => z.id === id)?.name ?? `Zone ${id}`;
     const sticky = [];
     const failed = [];
+    const notes = [];
     for (const [id, guard] of this.guards) {
       if (mono >= guard.due) continue;
       if (guard.failed) failed.push(name(id));
+      else if (guard.outOfBounds) notes.push(T.notes.outOfBounds(name(id), guard.outOfBounds));
       else if (guard.sticky) sticky.push(name(id));
     }
-    const notes = [];
     if (failed.length > 0) notes.push(T.notes.offFailed(failed, COMMAND.resends));
     if (sticky.length > 0) notes.push(T.notes.sticky(sticky));
+    for (const [id, note] of [...this.notes]) {
+      if (mono >= note.due) {
+        this.notes.delete(id);
+        continue;
+      }
+      notes.push(note.text(name(id)));
+    }
     return notes;
   }
 
@@ -880,7 +901,13 @@ export class GeniusHubApp {
     }
     const guards = {};
     for (const [id, g] of this.guards) {
-      guards[id] = { until: g.until, resends: g.resends, sticky: g.sticky, failed: g.failed };
+      guards[id] = {
+        until: g.until,
+        resends: g.resends,
+        sticky: g.sticky,
+        failed: g.failed,
+        outOfBounds: g.outOfBounds ?? null,
+      };
     }
     const p = this.pause;
     const state = {
@@ -1283,14 +1310,28 @@ export class GeniusHubApp {
       shared.readBy = Math.min(shared.readBy, readBy);
       return shared.promise;
     }
-    const f = { session, departed: false, readBy };
-    f.promise = new Promise((resolve) => this.defer(resolve)).then(async () => {
+    // One fresh read in flight at a time: the commands arriving meanwhile
+    // share the next one, which leaves when the current one ends.
+    const previous =
+      shared && shared.session === session && !shared.settled ? shared.promise : undefined;
+    const f = { session, departed: false, settled: false, readBy };
+    const start = previous
+      ? previous.then(
+          () => undefined,
+          () => undefined,
+        )
+      : new Promise((resolve) => this.defer(resolve));
+    f.promise = start.then(async () => {
       f.departed = true;
       const release = await session.client.release({ queued: false, answerBy: f.readBy });
       const zones = await session.client.zones({ queued: false, answerBy: f.readBy });
       return { uid: release.value.uid, zones: zones.value };
     });
-    f.promise.catch(() => {});
+    f.promise
+      .finally(() => {
+        f.settled = true;
+      })
+      .catch(() => {});
     this.fresh = f;
     return f.promise;
   }
@@ -1352,40 +1393,119 @@ export class GeniusHubApp {
     }
     this.followUp(session, zoneId);
     const back = await this.readBack(session, zoneId, answerBy);
-    this.verify(command, body, back, session, zoneId);
+    this.verify(command, body, back, zone, session, zoneId);
   }
 
   /**
-   * A command is a success only when the zone read back shows what was
-   * written: the mode, and for an override its setpoint (±0.05 °C) and a
-   * duration within the configured one. A value read back beyond the bounds
-   * of the integration turns the zone off at once.
+   * What a read of the zone says of a write: 'pending' (it still shows the
+   * state of before the command: not applied yet), 'ok', or a failure
+   * `{ outOfBounds, setpoint, left }` / `{ text }`. A value beyond the bounds
+   * counts only when it is new (not the state of before the command).
    */
-  verify(command, body, back, session, zoneId) {
-    if (back === undefined) {
-      throw this.refusal(T.command.sentUnchecked);
-    }
+  classify(command, body, back, before) {
+    const unchanged =
+      back.mode === before.mode &&
+      back.overrideSetpoint === before.overrideSetpoint &&
+      back.setpoint === before.setpoint &&
+      back.overrideLeft <= before.overrideLeft;
     const wanted = body.iMode === ZONE_MODE.OVERRIDE ? 'override' : MODE_NAMES[body.iMode];
     if (back.mode !== wanted) {
-      throw this.refusal(T.command.modeNotApplied(back.mode, wanted));
+      return unchanged ? 'pending' : { text: T.command.modeNotApplied(back.mode, wanted) };
     }
     if (body.fBoostSP === undefined) {
-      return;
+      return 'ok';
+    }
+    if (unchanged) {
+      return 'pending';
     }
     const setpoint = back.overrideSetpoint;
     const tooLong = back.overrideLeft > this.config.overrideMinutes * 60 + COMMAND.overrideSlack;
     if (tooLong || !this.inBounds(command.kind, setpoint)) {
-      this.logger.warn(`genius-hub zone ${zoneId}: the hub applied values out of bounds, off sent`);
-      this.emergencyOff(session, zoneId);
-      throw this.refusal(T.command.appliedOutOfBounds(setpoint, back.overrideLeft));
+      return { outOfBounds: true, setpoint, left: back.overrideLeft };
     }
     const same =
       command.kind === ZONE_KIND.ON_OFF
         ? setpoint !== undefined && setpoint > 0
         : Math.abs(setpoint - body.fBoostSP) <= COMMAND.tolerance;
-    if (!same) {
-      throw this.refusal(T.command.appliedOther(setpoint, body.fBoostSP));
+    return same ? 'ok' : { text: T.command.appliedOther(setpoint, body.fBoostSP) };
+  }
+
+  /**
+   * A command is a success only when the zone read back shows what was
+   * written: the mode, and for an override its setpoint (±0.05 °C) and a
+   * duration within the configured one. A read-back that still shows the
+   * state of before (a hub applying a little after its answer), or none in
+   * time, is checked again by the follow-up reads of 5 s and 20 s. A new
+   * value beyond the bounds of the integration turns the zone off at once.
+   */
+  verify(command, body, back, before, session, zoneId) {
+    this.checks.delete(zoneId);
+    const outcome = back === undefined ? 'pending' : this.classify(command, body, back, before);
+    if (outcome === 'ok') {
+      return;
     }
+    if (outcome === 'pending') {
+      this.checks.set(zoneId, {
+        command,
+        body,
+        before,
+        due: this.monotonic() + COMMAND.checkWithin,
+      });
+      throw this.refusal(T.command.sentUnchecked);
+    }
+    if (outcome.outOfBounds) {
+      this.outOfBounds(session, zoneId, outcome);
+      throw this.refusal(T.command.appliedOutOfBounds(outcome.setpoint, outcome.left));
+    }
+    throw this.refusal(outcome.text);
+  }
+
+  /** A value beyond the bounds applied by the hub: the zone off at once. */
+  outOfBounds(session, zoneId, { setpoint, left }) {
+    this.logger.warn(`genius-hub zone ${zoneId}: the hub applied values out of bounds, off sent`);
+    this.emergencyOff(session, zoneId, { setpoint, left });
+  }
+
+  /**
+   * The commands left unconfirmed, against a follow-up read: confirmed,
+   * a value beyond the bounds (the zone off), another value or nothing
+   * applied by the end of the check (said in the logs and the status).
+   */
+  async evaluateChecks(zones, mono, session) {
+    let changed = false;
+    for (const [zoneId, check] of [...this.checks]) {
+      const back = zones.find((z) => z.id === zoneId);
+      const outcome = back
+        ? this.classify(check.command, check.body, back, check.before)
+        : 'pending';
+      if (outcome === 'pending') {
+        if (mono >= check.due) {
+          this.checks.delete(zoneId);
+          this.logger.warn(`genius-hub zone ${zoneId}: the command was not applied by the hub`);
+          this.setNote(zoneId, T.notes.notApplied, mono);
+          changed = true;
+        }
+        continue;
+      }
+      this.checks.delete(zoneId);
+      changed = true;
+      if (outcome === 'ok') {
+        this.notes.delete(zoneId);
+      } else if (outcome.outOfBounds) {
+        this.outOfBounds(session, zoneId, outcome);
+      } else {
+        this.logger.warn(`genius-hub zone ${zoneId}: the hub applied another value`);
+        this.setNote(zoneId, () => outcome.text, mono);
+      }
+    }
+    if (changed) {
+      await this.updateStatus();
+    }
+  }
+
+  /** A note of a zone in the status for 10 minutes: `text(name)` -> { en, fr }. */
+  setNote(zoneId, text, mono) {
+    this.notes.set(zoneId, { text, due: mono + COMMAND.noteFor });
   }
 
   /** The refusal after a failed write: "nothing sent", "rejected" or "sent, without confirmation". */
@@ -1481,15 +1601,19 @@ export class GeniusHubApp {
   }
 
   /** Sets the "off" guard of a zone for 2 minutes (sticky stays sticky). */
-  setGuard(zoneId, { sticky }) {
+  setGuard(zoneId, { sticky, outOfBounds }) {
     const at = this.monotonic();
     const before = this.guards.get(zoneId);
+    const alive = before && at < before.due;
     this.guards.set(zoneId, {
       until: this.now() + COMMAND.guard,
       due: at + COMMAND.guard,
       resends: 0,
-      sticky: sticky || Boolean(before?.sticky && at < before.due),
+      sticky: sticky || Boolean(alive && before.sticky),
       failed: false,
+      /** Monotonic time it was set: a read started before says nothing of it. */
+      since: at,
+      outOfBounds: outOfBounds ?? (alive ? before.outOfBounds : undefined),
     });
     return this.guards.get(zoneId);
   }
@@ -1557,12 +1681,12 @@ export class GeniusHubApp {
       throw this.refusal(T.command.offUnchecked);
     }
     if (back.mode !== 'off') {
-      guard.failed = true;
-      this.logger.warn(`genius-hub zone ${zoneId}: "off" not applied by the hub`);
-      await this.saveState();
+      // Not shown yet (the hub may apply a little after its answer): the
+      // follow-up reads check it, and write it again only if it still shows on.
       void this.updateStatus();
-      throw this.refusal(T.command.offNotApplied(back.mode));
+      throw this.refusal(T.command.offPending(back.mode));
     }
+    this.checks.delete(zoneId);
     if (!guard.sticky) {
       // Confirmed: the guard is lifted.
       this.guards.delete(zoneId);
@@ -1572,9 +1696,10 @@ export class GeniusHubApp {
   }
 
   /** Turns a zone off at once (a value read back beyond the bounds): sticky guard, not awaited. */
-  emergencyOff(session, zoneId) {
+  emergencyOff(session, zoneId, applied) {
     this.stopEpoch.set(zoneId, (this.stopEpoch.get(zoneId) ?? 0) + 1);
-    this.setGuard(zoneId, { sticky: true });
+    this.checks.delete(zoneId);
+    this.setGuard(zoneId, { sticky: true, outOfBounds: applied });
     const received = this.now();
     void this.write(
       session,
@@ -1646,7 +1771,8 @@ export class GeniusHubApp {
       const fresh = await session.client.zones();
       if (session !== this.session || !this.running) return;
       this.publishZones(fresh.value, { force: false });
-      await this.enforceGuards(fresh.value, this.monotonic(), () => session !== this.session);
+      await this.evaluateChecks(fresh.value, this.monotonic(), session);
+      await this.enforceGuards(fresh.value, this.monotonic(), () => session !== this.session, mono);
       void this.publisher.flush();
     } catch (err) {
       this.logger.warn(`genius-hub follow-up read failed (${err?.code ?? err?.name ?? 'error'})`);
@@ -1661,7 +1787,7 @@ export class GeniusHubApp {
    * guard is lifted by a read showing the zone off; a guard whose time is
    * over is dropped.
    */
-  async enforceGuards(zones, mono, gone) {
+  async enforceGuards(zones, mono, gone, readAt = mono) {
     if (this.guards.size === 0) return;
     const session = this.session;
     let changed = false;
@@ -1672,7 +1798,7 @@ export class GeniusHubApp {
         continue;
       }
       const zone = zones.find((z) => z.id === zoneId);
-      if (!zone) {
+      if (!zone || (guard.since !== undefined && guard.since > readAt)) {
         continue;
       }
       if (zone.mode === 'off') {

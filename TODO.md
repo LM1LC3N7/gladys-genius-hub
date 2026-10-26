@@ -45,8 +45,14 @@ up to date at the end of every milestone.
   with a status asking to check the login; the library's table says 503 =
   "the authorization information is invalid", 502 = "the hub is offline").
 - Whether the read-back right after a PATCH already shows the new mode and
-  setpoint (the ack depends on it; a hub slower to apply would answer
-  "sent, the reads of 5 s and 20 s tell").
+  setpoint (the ack depends on it). A hub applying a little after its
+  answer is handled: a read-back still showing the state of before is "not
+  shown yet", and the follow-ups of 5 s and 20 s conclude (success, another
+  value, nothing applied, or "Off" for a new value beyond the bounds).
+- Whether `/v3/auth/release` asks for the login at all. If it does not, a
+  wrong password shows only as `page_refused` on the zones page, tried again
+  from 30 s up to 1 h with the hash sent each time: then treat two
+  `page_refused` in a row on the zones as a refused login.
 - The `Date` header of the hub (used for the staleness of the devices) and
   whether `lastComms` is Unix seconds on every device.
 - The time the hub takes for `data_manager` on a large house (the budget of
