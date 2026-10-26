@@ -101,8 +101,9 @@ rythme, les zones sont aussi lues : juste avant et juste après une commande,
   - le hub ne répond pas, ou répond une erreur serveur : « envoyée, sans
     confirmation » ;
   - la zone ne peut pas être relue à temps, ou la relecture la montre encore
-    comme avant la commande (le hub peut appliquer un peu après sa
-    réponse) : « pas encore visible ». Les relectures à 5 s et 20 s la
+    comme avant la commande, y compris relue une seconde fois 0,5 s plus
+    tard environ (le hub peut appliquer un peu après sa réponse) : « pas
+    encore visible ». Les relectures à 5 s et 20 s la
     vérifient alors : l'état dit si la commande n'est pas appliquée à 20 s
     ou appliquée avec une autre valeur, et une nouvelle valeur hors bornes
     arrête la zone ;

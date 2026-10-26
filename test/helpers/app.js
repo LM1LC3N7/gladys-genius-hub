@@ -172,8 +172,17 @@ export async function setup({
       d.features.some((f) => f.external_id === externalId),
     );
     const feature = device?.features.find((f) => f.external_id === externalId);
-    const promise = gladys.fake.setValue(device, feature, value);
+    let settled = false;
+    const promise = gladys.fake.setValue(device, feature, value).finally(() => {
+      settled = true;
+    });
     await advance(0);
+    // A command may wait on the clock (a second read-back): time moves on by
+    // 100 ms steps until it answers, 5 s at most (the ack delay of Gladys).
+    for (let i = 0; i < 50 && !settled; i += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+      if (!settled) await advance(100);
+    }
     const ack = await promise;
     await app.idle();
     return ack;

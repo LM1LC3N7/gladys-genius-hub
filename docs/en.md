@@ -94,8 +94,9 @@ at most, after a restart of the integration too).
   - the hub does not answer, or answers a server error: "sent, without
     confirmation";
   - the zone cannot be read back in time, or the read-back still shows the
-    zone as it was before the command (the hub may apply a little after its
-    answer): "not shown yet". The reads of 5 s and 20 s then check it: the
+    zone as it was before the command, also when read once more about
+    0.5 s later (the hub may apply a little after its answer): "not shown
+    yet". The reads of 5 s and 20 s then check it: the
     status says when the command was not applied by 20 s or applied with
     another value, and a new value beyond the bounds turns the zone off;
   - the zone read back shows another mode, or another setpoint ("the hub

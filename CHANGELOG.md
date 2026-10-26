@@ -45,4 +45,7 @@ the notes of the version's GitHub Release.
   for a failure: the follow-up reads of 5 s and 20 s confirm the command,
   say when it was not applied or applied otherwise, and turn the zone off
   only for a new value beyond the bounds (with a status note of its own);
-  one fresh read of the hub at a time for the commands.
+  the fresh read of the commands reads the identity and the zones together,
+  two at most in flight; a read-back still showing the state of before is
+  read once more 0.5 s later; one follow-up read per due time; an "Off"
+  ends the check of a command left unconfirmed.

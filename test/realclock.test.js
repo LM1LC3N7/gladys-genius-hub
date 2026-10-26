@@ -29,6 +29,7 @@ test('real clock: reads at 0, the interval and twice the interval; a command fit
     '/v3/data_manager': dataManagerPage(),
   };
   const reads = [];
+  const zoneReads = [];
   const patches = [];
   const server = createServer((req, res) => {
     if (req.method === 'PATCH') {
@@ -46,6 +47,7 @@ test('real clock: reads at 0, the interval and twice the interval; a command fit
     }
     // The periodic reads only (a command reads the release and the zones too).
     if (req.url === '/v3/data_manager') reads.push(performance.now() * SPEED);
+    if (req.url === '/v3/zones') zoneReads.push(performance.now() * SPEED);
     const body = pages[req.url];
     res.writeHead(body ? 200 : 404, { 'content-type': 'application/json' });
     res.end(JSON.stringify(body ?? {}));
@@ -88,12 +90,26 @@ test('real clock: reads at 0, the interval and twice the interval; a command fit
     const ack = await gladys.fake.setValue(device, feature, 20);
     assert.equal(ack.success, true, ack.error);
     assert.deepEqual(patches[0]?.body, { iMode: 16, fBoostSP: 20, iBoostTimeRemaining: 3600 });
+    // The follow-ups: exactly two reads of the zones (5 s and 20 s) in the
+    // 25 s after the answer, never one timer firing twice.
+    const acked = performance.now() * SPEED;
+    while (performance.now() * SPEED < acked + 25_000) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const follow = zoneReads.filter((t) => t > acked && t <= acked + 25_000);
+    assert.equal(
+      follow.length,
+      2,
+      `follow-up reads at ${follow.map((t) => Math.round(t - acked))}`,
+    );
     const until = (reads[0] ?? started) + 2.5 * INTERVAL;
     while (performance.now() * SPEED < until) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
     await app.stop();
   } finally {
+    // Stopped even when an assertion failed, so the process can end.
+    await app.stop();
     await new Promise((resolve) => server.close(resolve));
   }
   const at = reads.map((t) => Math.round(t - started));

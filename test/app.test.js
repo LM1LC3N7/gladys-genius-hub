@@ -788,7 +788,22 @@ test('r1-2: "Off" accepted but not applied: the follow-ups say so and write it a
   assert.doesNotMatch(gladys.fake.connectionStatus.message.en, /did not take effect/);
 });
 
-test('r2-1: a hub applying 300 ms after its answer: a setpoint over an app boost at 28 °C is confirmed at 5 s, never turned off', async () => {
+test('r3-4: a hub applying 300 ms after its answer: the second read-back confirms the command at once', async () => {
+  const hub = createHub();
+  Object.assign(zoneOf(hub, ZONE.LOUNGE), {
+    iMode: 16,
+    fBoostSP: 28,
+    fSP: 28,
+    iBoostTimeRemaining: 7200,
+  });
+  const { set } = await setup({ hub, devices: [createdZone()], config: ALLOWED });
+  hub.applyAfter = 300;
+  const ack = await set(Z(1, 'setpoint'), 22);
+  assert.equal(ack.success, true, ack.error);
+  assert.equal(offs(hub, ZONE.LOUNGE), 0);
+});
+
+test('r2-1: a hub applying 2 s after its answer: a setpoint over an app boost at 28 °C is confirmed at 5 s, never turned off', async () => {
   const hub = createHub();
   Object.assign(zoneOf(hub, ZONE.LOUNGE), {
     iMode: 16,
@@ -797,7 +812,7 @@ test('r2-1: a hub applying 300 ms after its answer: a setpoint over an app boost
     iBoostTimeRemaining: 7200,
   });
   const { set, wait, gladys } = await setup({ hub, devices: [createdZone()], config: ALLOWED });
-  hub.applyAfter = 300;
+  hub.applyAfter = 2000;
   const ack = await set(Z(1, 'setpoint'), 22);
   assert.equal(ack.success, false);
   assert.match(ack.error, /not shown yet by the zone read back/);
@@ -819,7 +834,7 @@ test('r2-1/r2-3: a value beyond the bounds seen only at the 5 s follow-up turns 
       const body = JSON.parse(init.body);
       hub.patches.push({ path, body });
       hub.late.push({
-        due: t + 300,
+        due: t + 2000,
         id: 1,
         body: body.iMode === 1 ? body : { ...body, fBoostSP: 28, iBoostTimeRemaining: 7200 },
       });
@@ -827,7 +842,7 @@ test('r2-1/r2-3: a value beyond the bounds seen only at the 5 s follow-up turns 
     }
     return undefined;
   });
-  hub.applyAfter = 300;
+  hub.applyAfter = 2000;
   const { set, wait, gladys } = await setup({ hub, devices: [createdZone()], config: ALLOWED });
   const ack = await set(Z(1, 'setpoint'), 22);
   assert.match(ack.error, /not shown yet/);
@@ -855,7 +870,7 @@ test('r2-1: "Off" applied 300 ms late: no failure note, no rewrite, the guard li
   assert.equal(heat.success, true, heat.error);
 });
 
-test('r2-2: commands arriving one after the other: one fresh read in flight at a time', async () => {
+test('r2-2/r3-1: commands one after the other: two fresh reads in flight at most', async () => {
   let inFlight = 0;
   let most = 0;
   const hub = createHub(async (path, t, init) => {
@@ -867,7 +882,7 @@ test('r2-2: commands arriving one after the other: one fresh read in flight at a
     }
     return undefined;
   });
-  const ids = [ZONE.LOUNGE, ZONE.KITCHEN, ZONE.FLOOR];
+  const ids = [ZONE.LOUNGE, ZONE.KITCHEN, ZONE.FLOOR, ZONE.WATER];
   const { gladys, app } = await setup({
     hub,
     devices: ids.map((id) => createdZone(id)),
@@ -878,17 +893,75 @@ test('r2-2: commands arriving one after the other: one fresh read in flight at a
   for (const id of ids) {
     const device = gladys.fake.devices.find((d) => d.external_id === Z(id));
     const feature = device.features.find((f) => f.external_id === Z(id, 'setpoint'));
-    acks.push(gladys.fake.setValue(device, feature, 22));
+    acks.push(gladys.fake.setValue(device, feature, id === ZONE.WATER ? 50 : 22));
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   const results = await Promise.all(acks);
   await app.idle();
   assert.deepEqual(
     results.map((r) => r.success),
-    [true, true, true],
+    [true, true, true, true],
     JSON.stringify(results),
   );
-  assert.equal(most, 1, 'never two fresh reads at once');
+  assert.equal(most, 2, 'never more than two fresh reads at once');
+});
+
+test('r3-1: a scene of 5 zones on a hub answering in 900 ms: 5 successes', async () => {
+  // Each request answers 900 ms (virtual) after it left; they overlap.
+  const hub = createHub(async () => {
+    const left = hub.clock.now;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    hub.clock.now = Math.max(hub.clock.now, left + 900);
+    return undefined;
+  });
+  const ids = [ZONE.LOUNGE, ZONE.KITCHEN, ZONE.FLOOR, ZONE.WATER, ZONE.TOWEL];
+  const { gladys, app } = await setup({
+    hub,
+    devices: ids.map((id) => createdZone(id)),
+    config: ALLOWED,
+  });
+  const acks = [];
+  for (const id of ids) {
+    const device = gladys.fake.devices.find((d) => d.external_id === Z(id));
+    const role = id === ZONE.TOWEL ? 'state' : 'setpoint';
+    const feature = device.features.find((f) => f.external_id === Z(id, role));
+    const value = id === ZONE.TOWEL ? 1 : id === ZONE.WATER ? 50 : 22;
+    acks.push(gladys.fake.setValue(device, feature, value));
+    await new Promise((resolve) => setTimeout(resolve, 3));
+  }
+  const results = await Promise.all(acks);
+  await app.idle();
+  assert.deepEqual(
+    results.map((r) => r.success),
+    [true, true, true, true, true],
+    JSON.stringify(results),
+  );
+});
+
+test('r3-3: an "Off" ends the check of a command left unconfirmed: no false note', async () => {
+  const hub = createHub();
+  const { set, wait, gladys } = await setup({ hub, devices: [createdZone()], config: ALLOWED });
+  hub.applyAfter = 2000;
+  assert.match((await set(Z(1, 'setpoint'), 23)).error, /not shown yet/);
+  await wait(2100);
+  // The "Off" is applied late too: its read-back is pending, the check of the
+  // setpoint would meet a zone off at the 5 s follow-up.
+  assert.match((await set(Z(1, 'heating-mode'), 0)).error, /still shows mode/);
+  await wait(25 * SECOND);
+  assert.doesNotMatch(gladys.fake.connectionStatus.message.en, /instead of|not applied/);
+});
+
+test('r3-5: a check is not concluded on a read started before the write', async () => {
+  const hub = createHub();
+  const { app, set } = await setup({ hub, devices: [createdZone()], config: ALLOWED });
+  hub.apply = false;
+  await set(Z(1, 'setpoint'), 23);
+  const check = app.checks.get(ZONE.LOUNGE);
+  assert.ok(check);
+  hub.apply = true;
+  const zones = [{ ...app.zones[0], id: 1, kind: 'radiator', mode: 'off', issues: [] }];
+  await app.evaluateChecks(zones, app.monotonic() + 30 * SECOND, app.session, check.writtenAt - 1);
+  assert.ok(app.checks.get(ZONE.LOUNGE), 'kept: the read left before the write');
 });
 
 test('"Off" goes through a pause and past a refused login (one try); other commands are refused then', async () => {

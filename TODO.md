@@ -114,8 +114,11 @@ up to date at the end of every milestone.
   bounds turns the zone off. Every "off" sets a guard of 2 min kept in
   /data, checked by reads every 20 s (after a restart too), "off" written
   again 3 times at most, lifted by a read showing off unless sticky.
-- **Fresh read of a command**: release (identity) + zones, outside the read
-  queue, shared by the commands arriving before it leaves (`setImmediate`).
+- **Fresh read of a command**: release (identity) + zones read together,
+  outside the read queue, shared by the commands arriving before it leaves
+  (`setImmediate`), two in flight at most (review r3: a scene of 5 zones on
+  a hub answering in 900 ms succeeds). A read-back showing the state of
+  before is read once more 0.5 s later when the budget allows.
 - **Weather temperature**: a zone with the issue `zone:using_weather_temp`
   publishes no temperature; a channel takes its node's `lastComms`; a
   device without any is sent on change only (no heartbeat).

@@ -171,6 +171,12 @@ export const COMMAND = {
   tolerance: 0.05,
   /** A read-back may show this much more override time than written (s). */
   overrideSlack: 60,
+  /** Fresh reads of the commands in flight at once, at most. */
+  freshInFlight: 2,
+  /** A read-back still showing the state of before is read once more this long after. */
+  secondReadBack: 500,
+  /** A follow-up read serves every due time within this margin of its own. */
+  followMargin: 50,
   /** A command not shown by the read-back is concluded by the follow-up of 20 s (or a later read). */
   checkWithin: 19 * SECOND,
   /** A note of the status about a command lasts this long. */

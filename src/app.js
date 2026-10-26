@@ -307,6 +307,8 @@ export class GeniusHubApp {
     this.follow = { timer: undefined, due: [] };
     /** The fresh read of the commands: `{ session, departed, settled, readBy, promise }`. */
     this.fresh = undefined;
+    /** The fresh reads in flight (two at most). */
+    this.freshFlying = [];
     /** zone id -> a command not confirmed yet: `{ command, body, before, due (monotonic) }`. */
     this.checks = new Map();
     /** zone id -> a note of the status about a command: `{ text(name), due (monotonic) }`. */
@@ -739,7 +741,7 @@ export class GeniusHubApp {
     if (result.devices) {
       this.publishDevices(result.devices, result.at ?? this.now());
     }
-    await this.evaluateChecks(result.zones, this.monotonic(), this.session);
+    await this.evaluateChecks(result.zones, this.monotonic(), this.session, mono);
     if (gone()) return;
     await this.enforceGuards(result.zones, mono, gone);
     if (gone()) return;
@@ -1300,9 +1302,10 @@ export class GeniusHubApp {
 
   /**
    * The fresh read of a command: the release (the identity of the hub) and
-   * the zones, outside the queue of the periodic reads (never behind a slow
-   * page of devices), shared by the commands that arrive before it leaves
-   * (a scene setting several zones at once makes one read).
+   * the zones, read together, outside the queue of the periodic reads (never
+   * behind a slow page of devices), shared by the commands that arrive
+   * before it leaves (a scene setting several zones at once makes one read).
+   * Two fresh reads in flight at most: a third waits for the first to end.
    */
   freshState(session, readBy) {
     const shared = this.fresh;
@@ -1310,26 +1313,31 @@ export class GeniusHubApp {
       shared.readBy = Math.min(shared.readBy, readBy);
       return shared.promise;
     }
-    // One fresh read in flight at a time: the commands arriving meanwhile
-    // share the next one, which leaves when the current one ends.
-    const previous =
-      shared && shared.session === session && !shared.settled ? shared.promise : undefined;
-    const f = { session, departed: false, settled: false, readBy };
-    const start = previous
-      ? previous.then(
-          () => undefined,
-          () => undefined,
-        )
-      : new Promise((resolve) => this.defer(resolve));
+    const flying = this.freshFlying.filter((f) => f.session === session);
+    const f = { session, departed: false, readBy };
+    const start =
+      flying.length >= COMMAND.freshInFlight
+        ? Promise.race(
+            flying.map((other) =>
+              other.promise.then(
+                () => undefined,
+                () => undefined,
+              ),
+            ),
+          )
+        : new Promise((resolve) => this.defer(resolve));
     f.promise = start.then(async () => {
       f.departed = true;
-      const release = await session.client.release({ queued: false, answerBy: f.readBy });
-      const zones = await session.client.zones({ queued: false, answerBy: f.readBy });
+      const [release, zones] = await Promise.all([
+        session.client.release({ queued: false, answerBy: f.readBy }),
+        session.client.zones({ queued: false, answerBy: f.readBy }),
+      ]);
       return { uid: release.value.uid, zones: zones.value };
     });
+    this.freshFlying.push(f);
     f.promise
       .finally(() => {
-        f.settled = true;
+        this.freshFlying = this.freshFlying.filter((other) => other !== f);
       })
       .catch(() => {});
     this.fresh = f;
@@ -1392,7 +1400,16 @@ export class GeniusHubApp {
       throw this.writeFailure(err, zoneId, 'command');
     }
     this.followUp(session, zoneId);
-    const back = await this.readBack(session, zoneId, answerBy);
+    let back = await this.readBack(session, zoneId, answerBy);
+    if (
+      back !== undefined &&
+      this.classify(command, body, back, zone) === 'pending' &&
+      answerBy - this.now() >= COMMAND.secondReadBack + COMMAND.minReadBack
+    ) {
+      // A hub applying a little after its answer: read once more before answering.
+      await new Promise((resolve) => this.timers.setTimeout(resolve, COMMAND.secondReadBack));
+      back = (await this.readBack(session, zoneId, answerBy)) ?? back;
+    }
     this.verify(command, body, back, zone, session, zoneId);
   }
 
@@ -1450,6 +1467,8 @@ export class GeniusHubApp {
         body,
         before,
         due: this.monotonic() + COMMAND.checkWithin,
+        /** Monotonic time the write left: a read started before says nothing of it. */
+        writtenAt: this.lastWriteAt.get(zoneId) ?? this.monotonic(),
       });
       throw this.refusal(T.command.sentUnchecked);
     }
@@ -1471,9 +1490,12 @@ export class GeniusHubApp {
    * a value beyond the bounds (the zone off), another value or nothing
    * applied by the end of the check (said in the logs and the status).
    */
-  async evaluateChecks(zones, mono, session) {
+  async evaluateChecks(zones, mono, session, readAt = mono) {
     let changed = false;
     for (const [zoneId, check] of [...this.checks]) {
+      if (readAt < check.writtenAt) {
+        continue;
+      }
       const back = zones.find((z) => z.id === zoneId);
       const outcome = back
         ? this.classify(check.command, check.body, back, check.before)
@@ -1625,8 +1647,10 @@ export class GeniusHubApp {
    */
   async protect(command, received) {
     const { zoneId } = command;
-    // Cancels any non-protective command of this zone not sent yet.
+    // Cancels any non-protective command of this zone not sent yet, and the
+    // check of one left unconfirmed (the "Off" supersedes it).
     this.stopEpoch.set(zoneId, (this.stopEpoch.get(zoneId) ?? 0) + 1);
+    this.checks.delete(zoneId);
     const sendBy = received + COMMAND.sendBy;
     const answerBy = received + COMMAND.answerBy;
     const lastBy = sendBy - COMMAND.minSend;
@@ -1753,15 +1777,19 @@ export class GeniusHubApp {
     this.follow.timer = this.timers.setTimeout(
       () => {
         this.follow.timer = undefined;
-        return this.runFollowUp(session);
+        return this.runFollowUp(session, next);
       },
       Math.max(0, next - mono),
     );
   }
 
-  async runFollowUp(session) {
+  async runFollowUp(session, target) {
     const mono = this.monotonic();
-    this.follow.due = this.follow.due.filter((at) => at > mono);
+    // A timer may fire a fraction of a millisecond early: the due times
+    // reached (within a margin) are all served by this read.
+    this.follow.due = this.follow.due.filter(
+      (at) => at > Math.max(mono, target ?? mono) + COMMAND.followMargin,
+    );
     if (session !== this.session || !this.running) {
       // Another session: its own follow-ups (a start schedules them).
       this.scheduleFollowUp(this.session);
@@ -1771,7 +1799,7 @@ export class GeniusHubApp {
       const fresh = await session.client.zones();
       if (session !== this.session || !this.running) return;
       this.publishZones(fresh.value, { force: false });
-      await this.evaluateChecks(fresh.value, this.monotonic(), session);
+      await this.evaluateChecks(fresh.value, this.monotonic(), session, mono);
       await this.enforceGuards(fresh.value, this.monotonic(), () => session !== this.session, mono);
       void this.publisher.flush();
     } catch (err) {
