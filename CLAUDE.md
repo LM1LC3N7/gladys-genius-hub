@@ -8,7 +8,7 @@ already taken and the next milestones.
 
 A Gladys Assistant **external integration** of type `device`: a Node.js
 service (Node 22+, ESM, no build step) in its own sandboxed Docker container,
-talking to Gladys through `@gladysassistant/integration-sdk` (v0.15), its only
+talking to Gladys through `@gladysassistant/integration-sdk` (v0.16), its only
 runtime dependency. It reads a Genius Hub through its local API v3 (HTTP on
 port 1223 of the hub, Node's own fetch), turns its zones and devices into
 Gladys devices and states, and sends the zone commands (setpoint, modes, hot

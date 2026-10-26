@@ -66,9 +66,10 @@ up to date at the end of every milestone.
   lock file, manifest, image tag `ghcr.io/lm1lc3n7/gladys-genius-hub:0.1.0`),
   as for the sibling integrations; the Release workflow owns them from now on
   (the first patch release gives 0.1.1).
-- **SDK**: `@gladysassistant/integration-sdk ^0.15.0` (0.16.0 was not
-  published on 2026-10-25: `npm view` gave 0.15.0); migration to 0.16.0
-  planned when it is out (types ai/tts/music, nothing breaking announced).
+- **SDK `^0.16.0`** (2026-10-26, migration wave 1): 0.16.0 is on npm since
+  2026-10-25 (a stale npm cache said otherwise); it adds the ai, tts and music
+  types; no effect here (`should_poll` explicit or `poll_frequency` unused). `keywords`, `countries` and `gladys_version >= 5.3.0` wait until
+  Gladys 5.3 is widespread.
 - **Reused project**: geniushub-client (MIT, 0.7.4, commit 2b182e5), cloned
   read-only in `~/code/ref/lot16/geniushub-client`, ported to JavaScript
   (`src/client.js`, `src/model.js`, `src/constants.js`); the SDK stays the
