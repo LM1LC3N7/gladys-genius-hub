@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-26
+
 ### Changed
 
 - Integration SDK 0.16 (no change for the devices).
@@ -56,5 +58,6 @@ the notes of the version's GitHub Release.
   read once more 0.5 s later; one follow-up read per due time; an "Off"
   ends the check of a command left unconfirmed.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-genius-hub/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/LM1LC3N7/gladys-genius-hub/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/LM1LC3N7/gladys-genius-hub/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/LM1LC3N7/gladys-genius-hub/releases/tag/v0.1.1

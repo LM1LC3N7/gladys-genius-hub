@@ -1,6 +1,6 @@
 {
   "name": "gladys-genius-hub",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Gladys Assistant external integration for Genius Hub (Heat Genius) heating: zones, setpoints, modes, radiator valves, sensors and plugs, through the local API of the hub. Unofficial, not affiliated with Genius Hub.",
   "type": "module",
