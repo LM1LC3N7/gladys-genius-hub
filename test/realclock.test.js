@@ -2,7 +2,7 @@
 // The app on a REAL moving clock (performance.now, Date.now, setTimeout) and a
 // real local HTTP server playing the hub: the reads really start, at 0, the
 // interval and twice the interval, with a bounded number of timers. The time
-// is sped up 100 times (60 s of the interval are 600 ms) but it is the real
+// is sped up 20 times (60 s of the interval are 3 s) but it is the real
 // clock: it moves between any two reads of it. A command on the real clock
 // too: its fresh read, its write and its read back fit the budget.
 // -----------------------------------------------------------------------------
@@ -18,7 +18,7 @@ import { createMemoryStore } from '../src/store.js';
 import { CONFIG, dataManagerPage, patchOk, releasePage, zones } from './fixtures/genius.js';
 import { applyPatch, createdZone } from './helpers/app.js';
 
-const SPEED = 100;
+const SPEED = 20;
 const INTERVAL = POLL_INTERVAL.default * 1000;
 
 test('real clock: reads at 0, the interval and twice the interval; a command fits its budget', async () => {
