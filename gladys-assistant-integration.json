@@ -59,8 +59,8 @@
       "required": true,
       "label": { "en": "Hub password", "fr": "Mot de passe du hub" },
       "description": {
-        "en": "The password of that user. Kept by Gladys in its database, never shown again, never logged, sent only to the hub address above (plain HTTP on your network, as the hub asks, as a hash). If the hub refuses it, reads stop until you change it or click \"Test the connection\".",
-        "fr": "Le mot de passe de cet utilisateur. Gardé par Gladys dans sa base, jamais réaffiché, jamais écrit dans les journaux, envoyé seulement à l'adresse du hub ci-dessus (en HTTP simple sur votre réseau, comme le hub le demande, sous forme de hachage). Si le hub le refuse, les lectures s'arrêtent jusqu'à ce que vous le changiez ou cliquiez sur « Tester la connexion »."
+        "en": "The password of that user. Kept by Gladys in its database, never shown again, never logged, sent only to the hub address above, in the form the hub asks for: a hash that is enough to log in to the hub, sent in plain HTTP, readable on your local network. If the hub refuses it, reads stop until you change it or click \"Test the connection\".",
+        "fr": "Le mot de passe de cet utilisateur. Gardé par Gladys dans sa base, jamais réaffiché, jamais écrit dans les journaux, envoyé seulement à l'adresse du hub ci-dessus, sous la forme que le hub demande : un hachage qui suffit à se connecter au hub, envoyé en HTTP simple, lisible sur votre réseau local. Si le hub le refuse, les lectures s'arrêtent jusqu'à ce que vous le changiez ou cliquiez sur « Tester la connexion »."
       }
     },
     {
@@ -110,8 +110,8 @@
         "fr": "Autoriser les commandes de mode et de marche"
       },
       "description": {
-        "en": "Off by default. Off: the thermostat mode \"Heating\", the Genius modes (timer, footprint, override), the hot water timer and boost and \"on\" of an on/off zone are refused. \"Off\" needs no option (see the guide for its refusal cases).",
-        "fr": "Désactivé par défaut. Désactivé : le mode de thermostat « Chauffage », les modes Genius (timer, footprint, dérogation), le timer et le boost de l'eau chaude et la « marche » d'une zone marche/arrêt sont refusés. « Arrêt » n'a pas besoin d'option (voir le guide pour ses cas de refus)."
+        "en": "Off by default. Off: the thermostat mode \"Heating\", the Genius modes (timer, footprint, override), the hot water timer and boost and \"on\" of an on/off zone are refused. \"Off\" needs no option; the guide lists its refusal cases. \"Timer\" applies the programme of the hub, whose setpoints the ceilings below do not cover.",
+        "fr": "Désactivé par défaut. Désactivé : le mode de thermostat « Chauffage », les modes Genius (timer, footprint, dérogation), le timer et le boost de l'eau chaude et la « marche » d'une zone marche/arrêt sont refusés. « Arrêt » n'a pas besoin d'option ; le guide liste ses cas de refus. « Timer » applique le programme du hub, dont les consignes ne sont pas couvertes par les plafonds ci-dessous."
       }
     },
     {

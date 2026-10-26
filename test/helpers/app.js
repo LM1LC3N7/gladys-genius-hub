@@ -15,8 +15,10 @@ import {
   UID,
   ZONE,
   dataManagerPage,
+  devices,
   patchOk,
   releasePage,
+  zones,
   zonesPage,
 } from '../fixtures/genius.js';
 import { createFetch, timeoutError } from './fakeNet.js';
@@ -49,34 +51,54 @@ export function createdHubDevice(addr = '2') {
   return buildHubDevice(ids(`ext:${SELECTOR}`), device, capabilitiesOf(device), { uid: UID });
 }
 
-/** The answers of a default hub, by path. */
-export const defaults = {
-  '/v3/auth/release': () => releasePage(),
-  '/v3/zones': () => zonesPage(),
-  '/v3/data_manager': () => dataManagerPage(),
-};
+/** Applies a PATCH of a zone to the state of the fake hub, as a hub would. */
+export function applyPatch(list, id, body) {
+  const target = list.find((z) => z.iID === id);
+  if (!target) return;
+  target.iMode = body.iMode;
+  if (body.fBoostSP !== undefined) {
+    target.fBoostSP = body.fBoostSP;
+    target.fSP = body.fBoostSP;
+    target.iBoostTimeRemaining = body.iBoostTimeRemaining;
+  }
+  if (body.iMode === 1) {
+    target.bOutRequestHeat = 0;
+    target.iBoostTimeRemaining = 0;
+  }
+}
 
 /**
- * The hub: `world(path, t, init)` -> an answer object | 'timeout' | a Response
- * | undefined (404). A PATCH of a zone answers `patchOk()` by default and is
- * recorded in `hub.patches`.
+ * The hub: a state (`hub.state.zones`, `.devices`, `.uid`) served by path; a
+ * PATCH is recorded in `hub.patches` and applied to the zones unless
+ * `hub.apply` is false. `intercept(path, t, init)` may answer first: an
+ * answer object | 'timeout' | a Response | undefined (the state answers).
  */
-export function createHub(world) {
-  const hub = { clock: { now: NOW }, patches: [] };
-  hub.world =
-    world ??
-    ((path, t, init) => {
-      if (init.method === 'PATCH') {
-        hub.patches.push({ path, body: JSON.parse(init.body), at: t });
-        return patchOk();
-      }
-      return defaults[path]?.();
-    });
+export function createHub(intercept) {
+  const hub = {
+    clock: { now: NOW },
+    patches: [],
+    apply: true,
+    state: { zones: zones(), devices: devices(), uid: UID },
+  };
+  hub.world = async (path, t, init) => {
+    const own = intercept ? await intercept(path, t, init) : undefined;
+    if (own !== undefined) return own;
+    if (init.method === 'PATCH') {
+      const body = JSON.parse(init.body);
+      const id = Number(path.split('/').pop());
+      hub.patches.push({ path, body, at: t });
+      if (hub.apply) applyPatch(hub.state.zones, id, body);
+      return patchOk();
+    }
+    if (path === '/v3/auth/release') return releasePage(hub.state.uid);
+    if (path === '/v3/zones') return zonesPage(hub.state.zones);
+    if (path === '/v3/data_manager') return dataManagerPage(hub.state.devices);
+    return new Response('not found', { status: 404 });
+  };
   hub.net = createFetch(async ({ path, init }) => {
     const answer = await hub.world(path, hub.clock.now, init);
     if (answer === 'timeout') throw timeoutError();
     if (answer instanceof Response) return answer;
-    if (answer === undefined) return new Response('not found', { status: 404 });
     return new Response(JSON.stringify(answer), {
       status: 200,
       headers: { 'content-type': 'application/json', date: new Date(hub.clock.now).toUTCString() },
@@ -98,6 +120,7 @@ export async function setup({
   const gladys = createFakeGladys({ selector: SELECTOR, config, devices: known });
   const { clock, timers, advance } = createFakeClock(now);
   let drift = 0;
+  let wallDrift = 0;
   hub.clock = clock;
   const lines = [];
   const log = (...args) => lines.push(args.map(String).join(' '));
@@ -106,7 +129,8 @@ export async function setup({
   const app = new GeniusHubApp({
     gladys,
     logger,
-    now: () => clock.now + wall.offset,
+    // The wall clock moves too between two reads of it (1 µs per call).
+    now: () => clock.now + wall.offset + (wallDrift += 0.001),
     // A real monotonic clock moves between two reads of it: 1 µs per call
     // here, so that a decision reading the clock twice is caught.
     monotonic: () => clock.now + (drift += 0.001),

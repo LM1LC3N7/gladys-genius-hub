@@ -30,7 +30,7 @@ import { parseDevices, parsePatch, parseRelease, parseZones } from './model.js';
 export class HubError extends Error {
   /**
    * @param {'timeout'|'unreachable'|'http'|'redirect'|'not_found'|'server'|'rate_limited'|
-   *   'refused'|'too_large'|'not_json'|'unknown_answer'|'late'|'rejected'} code
+   *   'refused'|'page_refused'|'too_large'|'not_json'|'unknown_answer'|'late'|'rejected'} code
    */
   constructor(code, { status, retryAfter, sent = false, error } = {}) {
     super(code);
@@ -201,7 +201,10 @@ export class HubClient {
     if (startBy !== undefined && now > startBy) {
       throw new HubError('late');
     }
-    const budget = answerBy === undefined ? this.timeout : Math.min(this.timeout, answerBy - now);
+    // Whole milliseconds (AbortSignal.timeout refuses a fraction).
+    const budget = Math.floor(
+      answerBy === undefined ? this.timeout : Math.min(this.timeout, answerBy - now),
+    );
     if (budget <= 0) {
       throw new HubError('late');
     }
@@ -249,16 +252,34 @@ export class HubClient {
     }
   }
 
-  /** A read, queued; `unknown_answer` when the page is not what it should be. */
-  read(path, parse, limit, options = {}) {
+  /**
+   * A read; `unknown_answer` when the page is not what it should be. Queued
+   * behind the other reads unless `queued: false` (the reads of a command:
+   * they never wait behind a periodic read). `principal`: the page whose
+   * 401/403 means "login refused"; on any other page it is `page_refused`
+   * (the login was accepted by the principal page, this page is not open
+   * to it).
+   */
+  read(path, parse, limit, { queued = true, principal = false, ...options } = {}) {
     const run = async () => {
-      const { json, at } = await this.request('GET', path, { ...options, limit });
-      const value = parse(json);
+      let answer;
+      try {
+        answer = await this.request('GET', path, { ...options, limit });
+      } catch (err) {
+        if (!principal && err instanceof HubError && err.code === 'refused') {
+          throw new HubError('page_refused', { status: err.status, sent: true });
+        }
+        throw err;
+      }
+      const value = parse(answer.json);
       if (value === undefined) {
         throw new HubError('unknown_answer');
       }
-      return { value, at };
+      return { value, at: answer.at };
     };
+    if (!queued) {
+      return run();
+    }
     const job = this.queue.then(run, run);
     this.queue = job.catch(() => {});
     return job;
@@ -274,9 +295,9 @@ export class HubClient {
     return this.read(PATHS.DATA_MANAGER, parseDevices, MAX_DATA_BYTES, options);
   }
 
-  /** The release and the unique id of the hub. */
+  /** The release and the unique id of the hub: the principal page (its 401/403 = login refused). */
   release(options) {
-    return this.read(PATHS.RELEASE, parseRelease, MAX_SMALL_BYTES, options);
+    return this.read(PATHS.RELEASE, parseRelease, MAX_SMALL_BYTES, { ...options, principal: true });
   }
 
   /**

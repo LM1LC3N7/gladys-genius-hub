@@ -31,3 +31,13 @@ the notes of the version's GitHub Release.
   recognised by its unique id (a Scan adopts another hub).
 - "Test the connection" button, status messages in English and French, docs
   en/fr.
+- A command is a success only when the zone read back shows what was
+  written; an override or a boost never keeps a setpoint of the hub outside
+  the bounds; every "Off" is checked for two minutes and written again while
+  the zone shows on, after a restart too.
+- A page of zones or devices refused to an accepted login no longer stops
+  the reads; a 503 says it may be the login, and a new login ends the pause;
+  the configuration is read again when Gladys cannot give it at start.
+- The fresh read of a command no longer waits behind a periodic read and
+  checks the identity of the hub; a zone on the outside temperature
+  publishes no temperature; a device channel takes the age of its node.

@@ -29,25 +29,33 @@
 //
 // The commands (rules learnt on the previous modules):
 //   - non-protective ones (a setpoint, a mode, "on"): refused unless their
-//     option allows it, decided on a fresh read of the zones only (never the
-//     values in memory), refused when the zone is missing or of another
-//     kind, when another hub answers, during a pause or after a refused
-//     login; options and ceilings checked on arrival, after the fresh read
-//     and right before the request leaves (beforeSend); sent within 3.5 s
-//     of the click or refused unsent; one at a time per zone, two seconds
-//     apart; never retried;
+//     option allows it; decided on a fresh read of the hub (its unique id and
+//     the zones, outside the queue of the periodic reads, shared by the
+//     commands arriving before it leaves); refused when the zone is missing
+//     or of another kind, when another hub answers, during a pause, after a
+//     refused login or while an "off" guard holds the zone; every setpoint
+//     written is within the bounds of the integration (the one asked, and
+//     the one an override or a boost takes from the hub); options and
+//     ceilings checked on arrival, after the fresh read and right before the
+//     request leaves (beforeSend); sent within 3.5 s of the click or refused
+//     unsent; one at a time per zone, two seconds apart; never retried; a
+//     success only when the zone read back shows the mode and setpoint
+//     written (a value beyond the bounds turns the zone off at once);
 //   - "Off" (the thermostat mode, the Genius mode, the hot water mode, the
-//     on/off zone): no option; it never waits for a read, only for the
-//     departure of a write of the zone already leaving (never its answer);
-//     it cancels a command of the zone not sent yet; it goes through a pause
-//     and past a refused login (one try); a write of the zone that left
-//     within two minutes before it makes its guard sticky: the follow-up
-//     reads write "Off" again (3 times at most) if they show the zone on,
-//     and no command that would start the zone is taken meanwhile;
+//     on/off zone): no option; it waits for no read, only for the
+//     configuration when it is not read yet and for the departure of a write
+//     of the zone already leaving (never its answer), within its budget; it
+//     cancels a command of the zone not sent yet; it goes through a pause
+//     and past a refused login (one try); a success only when the zone read
+//     back is off. Every "off" that may have reached the hub sets a guard of
+//     two minutes, kept in /data: the reads (follow-ups every 20 s while it
+//     lasts, after a restart too) write "Off" again while the zone shows on
+//     (3 times at most) and the status says so; a plain guard is lifted by a
+//     read showing the zone off, a sticky one (a setting of the zone left
+//     within two minutes before) by the time only;
 //   - a write that may have reached the hub (silence, a dropped connection,
 //     a 5xx) is never answered "nothing sent": "sent, without confirmation";
-//     a write the hub answered is read back within the budget when there is
-//     time, then followed up; the ack never waits for a publication.
+//     the ack never waits for a publication.
 // -----------------------------------------------------------------------------
 
 import { createHash, randomBytes } from 'node:crypto';
@@ -56,13 +64,16 @@ import { isComplete, normalizeConfig, numberOf } from './config.js';
 import {
   ATTEMPT_SAVE_EVERY,
   COMMAND,
+  CONFIG_RETRY,
   DEVICE_STALE_AFTER,
   GLADYS,
   HOT_WATER_SETPOINT,
   MAX_ZONES,
+  MODE_NAMES,
   MODE_VALUES,
   OFFERED_KINDS,
   ON_OFF_SETPOINT,
+  PAGE_RETRY_MAX,
   PAUSE_MAX,
   PAUSE_MIN,
   RETRY_MAX,
@@ -206,17 +217,28 @@ function validDevices(devices) {
   return new Map([...kept].slice(-MAX_KEPT_DEVICES));
 }
 
-/** The sticky "off" guards kept in /data: zone id -> `{ until (wall), resends }`. */
-function validSticky(sticky, now, mono) {
+/**
+ * The "off" guards kept in /data: zone id -> `{ until (wall), resends,
+ * sticky, failed }`. A guard follows every "off" for 2 minutes at most: the
+ * reads write "off" again while they show the zone on (3 times at most); a
+ * plain guard is lifted by a read showing the zone off, a sticky one (an
+ * "off" after a setting that had just left) by the time only.
+ */
+function validGuards(guards, now, mono) {
   const kept = new Map();
-  for (const [key, value] of plainEntries(sticky)) {
+  for (const [key, value] of plainEntries(guards)) {
     const id = Number(key);
     if (!Number.isInteger(id) || id < 0 || !finite(value.until) || value.until <= now) continue;
     const left = Math.min(value.until - now, COMMAND.guard);
     kept.set(id, {
       until: now + left,
       due: mono + left,
-      resends: Number.isInteger(value.resends) && value.resends >= 0 ? value.resends : 0,
+      resends:
+        Number.isInteger(value.resends) && value.resends >= 0
+          ? Math.min(value.resends, COMMAND.resends)
+          : 0,
+      sticky: value.sticky === true,
+      failed: value.failed === true,
     });
   }
   return kept;
@@ -241,6 +263,7 @@ export class GeniusHubApp {
     clientFactory = (options) => new HubClient(options),
     store = createFileStore(),
     random = () => randomBytes(16).toString('hex'),
+    defer = (fn) => setImmediate(fn),
   }) {
     this.gladys = gladys;
     this.logger = logger;
@@ -249,6 +272,8 @@ export class GeniusHubApp {
     this.timers = timers;
     this.clientFactory = clientFactory;
     this.random = random;
+    /** Runs `fn` once the commands that arrived meanwhile are in (the shared fresh read). */
+    this.defer = defer;
     this.store = store;
     this.savedKey = undefined;
     this.config = normalizeConfig();
@@ -273,6 +298,15 @@ export class GeniusHubApp {
     this.stopEpoch = new Map();
     /** The follow-up reads: `{ timer, due: [monotonic...] }`. */
     this.follow = { timer: undefined, due: [] };
+    /** The fresh read of the commands not departed yet: `{ session, departed, readBy, promise }`. */
+    this.fresh = undefined;
+    /** The configuration read from Gladys at least once: until then, "Off" waits for it. */
+    this.loaded = false;
+    this.ready = new Promise((resolve) => {
+      this.markReady = resolve;
+    });
+    /** Reading the configuration from Gladys failed: `{ timer, failures }`. */
+    this.configRetry = { timer: undefined, failures: 0 };
 
     const kept = store.load();
     const at = now();
@@ -285,7 +319,7 @@ export class GeniusHubApp {
     /** The zones and devices seen, kept so that they are offered at a restart. */
     this.zones = validZones(kept.zones);
     this.devices = validDevices(kept.devices);
-    this.sticky = validSticky(kept.sticky, at, mono);
+    this.guards = validGuards(kept.guards, at, mono);
     this.lastAttemptAt = finite(kept.lastAttemptAt) ? Math.min(kept.lastAttemptAt, at) : undefined;
     this.savedAttemptAt = this.lastAttemptAt;
     /** Monotonic time of the last read started. */
@@ -305,6 +339,8 @@ export class GeniusHubApp {
     this.current = undefined;
     /** The unique id of another hub answering at the address, when it is not the one kept. */
     this.otherHub = undefined;
+    /** The devices page refused to the login: `{ failures, until (monotonic), err }`. */
+    this.devicesSkip = { failures: 0, until: undefined, err: undefined };
   }
 
   // --- Lifecycle -------------------------------------------------------------
@@ -313,7 +349,43 @@ export class GeniusHubApp {
     return this.serialize(() => this.doStart(raw));
   }
 
+  /**
+   * A connection to Gladys: the configuration read, then a start. A read of
+   * the configuration that fails is tried again (5 s, doubled up to 5 min),
+   * never left dead; the status says so.
+   */
+  async connected(loadConfig) {
+    this.clearConfigRetry();
+    let config;
+    try {
+      config = await loadConfig();
+    } catch (err) {
+      this.configRetry.failures += 1;
+      const wait = Math.min(
+        CONFIG_RETRY.min * 2 ** (this.configRetry.failures - 1),
+        CONFIG_RETRY.max,
+      );
+      this.logger.warn(`genius-hub: reading the configuration failed (${err?.name ?? 'Error'})`);
+      await this.setStatus(false, T.configRetry(wait));
+      this.configRetry.timer = this.timers.setTimeout(() => {
+        this.configRetry.timer = undefined;
+        return this.connected(loadConfig);
+      }, wait);
+      return;
+    }
+    this.configRetry.failures = 0;
+    await this.start(config);
+  }
+
+  clearConfigRetry() {
+    if (this.configRetry.timer !== undefined) {
+      this.timers.clearTimeout(this.configRetry.timer);
+      this.configRetry.timer = undefined;
+    }
+  }
+
   stop() {
+    this.clearConfigRetry();
     return this.serialize(async () => {
       this.doStop();
       await this.saveState();
@@ -361,7 +433,6 @@ export class GeniusHubApp {
     const first = this.session === undefined;
     const changed =
       first || GeniusHubApp.sessionKey(config) !== GeniusHubApp.sessionKey(this.config);
-    const addressChanged = !first && config.address !== this.config.address;
     this.config = config;
     if (changed) {
       this.session = {
@@ -373,7 +444,9 @@ export class GeniusHubApp {
       if (!first) {
         this.resetReads();
       }
-      if (addressChanged && this.pause) {
+      if (!first && this.pause) {
+        // Another address or login: a pause asked for the old one ends (a 503
+        // of the hub may mean a wrong login); the pace does not.
         this.pause = undefined;
         await this.saveState();
       }
@@ -383,6 +456,8 @@ export class GeniusHubApp {
       await this.saveState();
     }
     this.running = true;
+    this.loaded = true;
+    this.markReady();
     // The core keeps the connection status, the Discovery list and the last
     // values in memory: a restarted Gladys has lost them, so they are always
     // sent again (the values at the next read).
@@ -395,6 +470,10 @@ export class GeniusHubApp {
     await this.discover();
     await this.updateStatus();
     this.schedule();
+    // The follow-ups left by a stop (a save of the form) and the guards kept
+    // in /data go on (their reads are outside the pace).
+    this.guardFollowUps(COMMAND.followUps[0]);
+    this.scheduleFollowUp(this.session);
   }
 
   doStop() {
@@ -504,7 +583,7 @@ export class GeniusHubApp {
     if (gone()) return;
     let result;
     try {
-      result = await this.readAll(client, gone);
+      result = await this.readAll(client, gone, mono);
     } catch (err) {
       if (gone()) return;
       await this.failed(err, mono, gone);
@@ -515,21 +594,33 @@ export class GeniusHubApp {
   }
 
   /** The release (principal page), the zones, then the devices (optional). */
-  async readAll(client, gone) {
+  async readAll(client, gone, mono) {
     const release = await client.release();
     if (gone()) return undefined;
     const zones = await client.zones();
     if (gone()) return undefined;
     let devices;
     let devicesError;
-    try {
-      devices = await client.devices();
-    } catch (err) {
-      if (gone()) return undefined;
-      if (!(err instanceof HubError) || err.code === 'rate_limited' || err.code === 'refused') {
-        throw err;
+    const skip = this.devicesSkip;
+    if (skip.until !== undefined && mono < skip.until) {
+      // The devices page was refused to this login: tried again later.
+      devicesError = skip.err;
+    } else {
+      try {
+        devices = await client.devices();
+        this.devicesSkip = { failures: 0, until: undefined, err: undefined };
+      } catch (err) {
+        if (gone()) return undefined;
+        if (!(err instanceof HubError) || err.code === 'rate_limited') {
+          throw err;
+        }
+        devicesError = err;
+        if (err.code === 'page_refused') {
+          const failures = skip.failures + 1;
+          const wait = Math.min(this.interval() * 2 ** failures, PAGE_RETRY_MAX);
+          this.devicesSkip = { failures, until: this.monotonic() + wait, err };
+        }
       }
-      devicesError = err;
     }
     return {
       hub: release.value,
@@ -637,7 +728,7 @@ export class GeniusHubApp {
     if (result.devices) {
       this.publishDevices(result.devices, result.at ?? this.now());
     }
-    await this.enforceSticky(result.zones, mono, gone);
+    await this.enforceGuards(result.zones, mono, gone);
     if (gone()) return;
     await this.saveState();
     if (gone()) return;
@@ -687,7 +778,9 @@ export class GeniusHubApp {
       await this.updateStatus();
       return;
     }
-    const wait = Math.min(RETRY_MIN * 2 ** this.failures, RETRY_MAX);
+    // A page refused to the login (the release accepted it): spaced up to 1 h.
+    const max = code === 'page_refused' ? PAGE_RETRY_MAX : RETRY_MAX;
+    const wait = Math.min(RETRY_MIN * 2 ** this.failures, max);
     this.failures += 1;
     this.lastError = err;
     this.nextTryAt = at + wait;
@@ -714,12 +807,21 @@ export class GeniusHubApp {
     await this.setStatus(connected, message);
   }
 
-  stickyNotes() {
-    const names = [];
-    for (const id of this.sticky.keys()) {
-      names.push(this.zones.find((z) => z.id === id)?.name ?? `Zone ${id}`);
+  /** The notes of the "off" guards: the ones enforced, the ones the hub did not apply. */
+  guardNotes() {
+    const mono = this.monotonic();
+    const name = (id) => this.zones.find((z) => z.id === id)?.name ?? `Zone ${id}`;
+    const sticky = [];
+    const failed = [];
+    for (const [id, guard] of this.guards) {
+      if (mono >= guard.due) continue;
+      if (guard.failed) failed.push(name(id));
+      else if (guard.sticky) sticky.push(name(id));
     }
-    return names.length > 0 ? [T.notes.sticky(names)] : [];
+    const notes = [];
+    if (failed.length > 0) notes.push(T.notes.offFailed(failed, COMMAND.resends));
+    if (sticky.length > 0) notes.push(T.notes.sticky(sticky));
+    return notes;
   }
 
   /** The status from what is known now: never a read. */
@@ -730,7 +832,7 @@ export class GeniusHubApp {
       if (this.config.invalidLogin) return [false, T.badLogin];
       return [false, T.incomplete];
     }
-    const notes = this.stickyNotes();
+    const notes = this.guardNotes();
     if (this.refusedApplies()) {
       return [false, T.refused(address, notes)];
     }
@@ -776,16 +878,16 @@ export class GeniusHubApp {
         lastComms: d.lastComms ?? null,
       };
     }
-    const sticky = {};
-    for (const [id, s] of this.sticky) {
-      sticky[id] = { until: s.until, resends: s.resends };
+    const guards = {};
+    for (const [id, g] of this.guards) {
+      guards[id] = { until: g.until, resends: g.resends, sticky: g.sticky, failed: g.failed };
     }
     const p = this.pause;
     const state = {
       hub: this.hub ?? null,
       zones: this.zones,
       devices,
-      sticky,
+      guards,
       pause: p ? { until: p.until, count: p.count, code: p.code, status: p.status } : null,
       refused: this.refused ?? null,
       lastAttemptAt: this.lastAttemptAt ?? null,
@@ -858,7 +960,7 @@ export class GeniusHubApp {
           lastComms: undefined,
         });
       }
-      this.sticky.clear();
+      this.guards.clear();
       this.current = { zones: o.offered, devices: o.devices };
       this.gladys.forgetPublishedStates?.();
       this.logger.info('genius-hub: the hub at this address is adopted');
@@ -910,11 +1012,15 @@ export class GeniusHubApp {
 
   /**
    * The states of the devices read: only when the device talked to the hub
-   * since the values last published (`lastComms`, kept in /data), and not
-   * when that was more than DEVICE_STALE_AFTER before the hub's clock.
+   * since the values last published (`lastComms`, kept in /data; a channel
+   * takes its node's), and not when that was more than DEVICE_STALE_AFTER
+   * before the hub's clock. A device without any time of last communication
+   * is sent on change only, never again as a heartbeat.
    */
   publishDevices(devices, hubTime) {
     const states = [];
+    /** Values of a device that gives no time of last communication: on change only, no heartbeat. */
+    const undated = [];
     let stale = 0;
     for (const device of devices) {
       const created = this.createdDevice(deviceIds(this.gladys, device.addr).device);
@@ -935,13 +1041,16 @@ export class GeniusHubApp {
         : null;
       const sent = features ? own.filter((s) => features.has(s.device_feature_external_id)) : own;
       if (sent.length > 0) {
-        states.push(...sent);
+        (device.lastComms === undefined ? undated : states).push(...sent);
         if (kept && device.lastComms !== undefined) kept.lastComms = device.lastComms;
       }
     }
     if (this.outcome) this.outcome.stale = stale;
     if (states.length > 0) {
       this.publisher.push(states);
+    }
+    if (undated.length > 0) {
+      this.publisher.push(undated, { heartbeat: false });
     }
   }
 
@@ -1047,7 +1156,7 @@ export class GeniusHubApp {
     this.checkOption(command);
     const { zoneId } = command;
     const mono = this.monotonic();
-    if (this.stickyActive(zoneId, mono)) {
+    if (this.guardActive(zoneId, mono)) {
       throw this.refusal(T.command.stopped);
     }
     if (this.inFlight.has(zoneId) || mono < (this.quietUntil.get(zoneId) ?? -Infinity)) {
@@ -1072,16 +1181,31 @@ export class GeniusHubApp {
     }
   }
 
+  /** Whether a setpoint is within the bounds of the integration for this kind of zone. */
+  inBounds(kind, value) {
+    if (kind === ZONE_KIND.ON_OFF) {
+      return true;
+    }
+    const { low, high } = this.bounds(kind);
+    return (
+      typeof value === 'number' &&
+      Number.isFinite(value) &&
+      value >= low &&
+      value <= high &&
+      (kind !== ZONE_KIND.HOT_WATER || Number.isInteger(value))
+    );
+  }
+
   /** The checks of a non-protective command before sending, on the latest configuration and state. */
-  checkBeforeSend({ session, zoneId, epoch, command }) {
+  checkBeforeSend({ session, zoneId, epoch, command, body }) {
     this.checkOption(command);
-    if (
-      (this.stopEpoch.get(zoneId) ?? 0) !== epoch ||
-      this.stickyActive(zoneId, this.monotonic())
-    ) {
+    if ((this.stopEpoch.get(zoneId) ?? 0) !== epoch || this.guardActive(zoneId, this.monotonic())) {
       throw this.refusal(T.command.stopped);
     }
-    if (session !== this.session || !session?.client) {
+    if (session !== this.session) {
+      throw this.refusal(T.command.configChanged);
+    }
+    if (!session?.client) {
       throw this.refusal(T.command.noSession);
     }
     if (this.refusedApplies()) {
@@ -1093,12 +1217,14 @@ export class GeniusHubApp {
     if (this.otherHub) {
       throw this.refusal(T.command.otherHub);
     }
-    if (command.role === ROLES.SETPOINT) {
-      // The ceiling may have been lowered since the command arrived.
-      const { low, high } = this.bounds(command.kind);
-      if (command.value < low || command.value > high) {
-        throw this.refusal(T.command.outOfRange(low, high));
-      }
+    // The ceilings may have been lowered since the command arrived: every
+    // setpoint written is checked, the one asked and the one taken from the hub.
+    const { low, high } = this.bounds(command.kind);
+    if (command.role === ROLES.SETPOINT && !this.inBounds(command.kind, command.value)) {
+      throw this.refusal(T.command.outOfRange(low, high));
+    }
+    if (body?.fBoostSP !== undefined && !this.inBounds(command.kind, body.fBoostSP)) {
+      throw this.refusal(T.command.currentOutOfRange(body.fBoostSP, low, high));
     }
   }
 
@@ -1111,8 +1237,6 @@ export class GeniusHubApp {
       fBoostSP: setpoint,
       iBoostTimeRemaining: duration,
     });
-    const current =
-      kind === ZONE_KIND.ON_OFF ? ON_OFF_SETPOINT : (zone.setpoint ?? zone.overrideSetpoint);
     if (role === ROLES.SETPOINT) {
       if (zone.mode === 'override' && zone.overrideSetpoint === value) return undefined;
       return override(value);
@@ -1131,10 +1255,44 @@ export class GeniusHubApp {
     }
     if (zone.mode === mode) return undefined;
     if (mode === 'override') {
-      if (current === undefined) throw this.refusal(T.command.badValue);
+      if (kind === ZONE_KIND.ON_OFF) {
+        return override(ON_OFF_SETPOINT);
+      }
+      // An override keeps the setpoint the hub shows now: only when it is
+      // within the bounds of the integration (never a hot water above its
+      // ceiling, never a boost at 0 °C); otherwise a setpoint must be sent.
+      const current = zone.setpoint;
+      if (!this.inBounds(kind, current)) {
+        const { low, high } = this.bounds(kind);
+        throw this.refusal(T.command.currentOutOfRange(current, low, high));
+      }
       return override(current);
     }
     return { iMode: MODE_VALUES[mode] };
+  }
+
+  /**
+   * The fresh read of a command: the release (the identity of the hub) and
+   * the zones, outside the queue of the periodic reads (never behind a slow
+   * page of devices), shared by the commands that arrive before it leaves
+   * (a scene setting several zones at once makes one read).
+   */
+  freshState(session, readBy) {
+    const shared = this.fresh;
+    if (shared && shared.session === session && !shared.departed) {
+      shared.readBy = Math.min(shared.readBy, readBy);
+      return shared.promise;
+    }
+    const f = { session, departed: false, readBy };
+    f.promise = new Promise((resolve) => this.defer(resolve)).then(async () => {
+      f.departed = true;
+      const release = await session.client.release({ queued: false, answerBy: f.readBy });
+      const zones = await session.client.zones({ queued: false, answerBy: f.readBy });
+      return { uid: release.value.uid, zones: zones.value };
+    });
+    f.promise.catch(() => {});
+    this.fresh = f;
+    return f.promise;
   }
 
   async command(command, received) {
@@ -1145,29 +1303,35 @@ export class GeniusHubApp {
     const answerBy = received + COMMAND.answerBy;
     const context = { session, zoneId, epoch, command };
     this.checkBeforeSend(context);
-    const readBy = Math.min(this.now() + COMMAND.readMax, sendBy - COMMAND.minSend);
-    if (readBy - this.now() < COMMAND.minSend) {
+    const start = this.now();
+    const readBy = Math.min(start + COMMAND.readMax, sendBy - COMMAND.minSend);
+    if (readBy - start < COMMAND.minSend) {
       throw this.refusal(T.command.tooSlow);
     }
-    // The fresh read: the zones now, never the values in memory.
+    // The fresh read: the hub and the zones now, never the values in memory.
     let fresh;
     try {
-      fresh = await session.client.zones({ answerBy: readBy });
+      fresh = await this.freshState(session, readBy);
     } catch (err) {
       if (!(err instanceof HubError)) throw err;
       if (err.code === 'late' || err.code === 'timeout') throw this.refusal(T.command.tooSlow);
       if (err.code === 'refused') throw this.refusal(T.command.refusedLogin);
       throw this.refusal(T.command.unknownState(err));
     }
-    const zone = fresh.value.find((z) => z.id === zoneId);
+    // The identity of the hub, read in this command.
+    if (!this.hub || fresh.uid !== this.hub.uid) {
+      throw this.refusal(this.hub ? T.command.otherHub : T.command.notReadYet);
+    }
+    const zone = fresh.zones.find((z) => z.id === zoneId);
     if (!zone || zone.kind !== command.kind) {
       throw this.refusal(T.command.unknownZone);
     }
     const body = this.bodyOf(command, zone);
+    context.body = body;
     // The options may have been turned off during the read: checked again.
     this.checkBeforeSend(context);
     if (body === undefined) {
-      // Already so: nothing sent.
+      // Already so: nothing sent, a success.
       return;
     }
     if (this.now() > sendBy) {
@@ -1187,7 +1351,41 @@ export class GeniusHubApp {
       throw this.writeFailure(err, zoneId, 'command');
     }
     this.followUp(session, zoneId);
-    await this.readBack(session, zoneId, answerBy);
+    const back = await this.readBack(session, zoneId, answerBy);
+    this.verify(command, body, back, session, zoneId);
+  }
+
+  /**
+   * A command is a success only when the zone read back shows what was
+   * written: the mode, and for an override its setpoint (±0.05 °C) and a
+   * duration within the configured one. A value read back beyond the bounds
+   * of the integration turns the zone off at once.
+   */
+  verify(command, body, back, session, zoneId) {
+    if (back === undefined) {
+      throw this.refusal(T.command.sentUnchecked);
+    }
+    const wanted = body.iMode === ZONE_MODE.OVERRIDE ? 'override' : MODE_NAMES[body.iMode];
+    if (back.mode !== wanted) {
+      throw this.refusal(T.command.modeNotApplied(back.mode, wanted));
+    }
+    if (body.fBoostSP === undefined) {
+      return;
+    }
+    const setpoint = back.overrideSetpoint;
+    const tooLong = back.overrideLeft > this.config.overrideMinutes * 60 + COMMAND.overrideSlack;
+    if (tooLong || !this.inBounds(command.kind, setpoint)) {
+      this.logger.warn(`genius-hub zone ${zoneId}: the hub applied values out of bounds, off sent`);
+      this.emergencyOff(session, zoneId);
+      throw this.refusal(T.command.appliedOutOfBounds(setpoint, back.overrideLeft));
+    }
+    const same =
+      command.kind === ZONE_KIND.ON_OFF
+        ? setpoint !== undefined && setpoint > 0
+        : Math.abs(setpoint - body.fBoostSP) <= COMMAND.tolerance;
+    if (!same) {
+      throw this.refusal(T.command.appliedOther(setpoint, body.fBoostSP));
+    }
   }
 
   /** The refusal after a failed write: "nothing sent", "rejected" or "sent, without confirmation". */
@@ -1237,18 +1435,24 @@ export class GeniusHubApp {
     return tracked;
   }
 
-  /** The zone read back right after a write, when the budget leaves time; its values published. */
+  /**
+   * The zone read back right after a write (outside the read queue), when
+   * the budget leaves time; its values published. Undefined when it could
+   * not be read in time.
+   */
   async readBack(session, zoneId, answerBy) {
     if (answerBy - this.now() < COMMAND.minReadBack) {
-      return;
+      return undefined;
     }
     try {
-      const fresh = await session.client.zones({ answerBy });
-      if (session !== this.session) return;
+      const fresh = await session.client.zones({ queued: false, answerBy });
+      if (session !== this.session) return undefined;
       this.publishZones(fresh.value, { force: true });
       void this.publisher.flush();
+      return fresh.value.find((z) => z.id === zoneId);
     } catch {
       // The follow-ups tell.
+      return undefined;
     }
   }
 
@@ -1265,33 +1469,51 @@ export class GeniusHubApp {
     }
   }
 
-  /** Whether a sticky "off" holds the zone now. */
-  stickyActive(zoneId, mono) {
-    const s = this.sticky.get(zoneId);
-    if (!s) return false;
-    if (mono >= s.due) {
-      this.sticky.delete(zoneId);
+  /** Whether an "off" guard holds the zone now (no command that would start it). */
+  guardActive(zoneId, mono) {
+    const guard = this.guards.get(zoneId);
+    if (!guard) return false;
+    if (mono >= guard.due) {
+      this.guards.delete(zoneId);
       return false;
     }
     return true;
   }
 
+  /** Sets the "off" guard of a zone for 2 minutes (sticky stays sticky). */
+  setGuard(zoneId, { sticky }) {
+    const at = this.monotonic();
+    const before = this.guards.get(zoneId);
+    this.guards.set(zoneId, {
+      until: this.now() + COMMAND.guard,
+      due: at + COMMAND.guard,
+      resends: 0,
+      sticky: sticky || Boolean(before?.sticky && at < before.due),
+      failed: false,
+    });
+    return this.guards.get(zoneId);
+  }
+
   /**
    * "Off": the protective choice. No option, no fresh read, through a pause
-   * and past a refused login (one try). Refused only when it cannot leave:
-   * see the docs (the same list).
+   * and past a refused login (one try). Its refusal cases are listed in the
+   * docs (the same list). A success only when the zone read back is off.
    */
   async protect(command, received) {
     const { zoneId } = command;
     // Cancels any non-protective command of this zone not sent yet.
     this.stopEpoch.set(zoneId, (this.stopEpoch.get(zoneId) ?? 0) + 1);
+    const sendBy = received + COMMAND.sendBy;
+    const answerBy = received + COMMAND.answerBy;
+    const lastBy = sendBy - COMMAND.minSend;
+    if (!this.loaded && (await this.within(this.ready, lastBy)) === 'late') {
+      // The configuration is not read from Gladys yet (it is tried again).
+      throw this.refusal(T.command.notLoaded);
+    }
     const session = this.session;
     if (!session?.client) {
       throw this.refusal(T.command.noSession);
     }
-    const sendBy = received + COMMAND.sendBy;
-    const answerBy = received + COMMAND.answerBy;
-    const lastBy = sendBy - COMMAND.minSend;
     // Only the departure of a write already leaving is awaited (never its answer).
     const leaving = this.departures.get(zoneId);
     const earlier = this.inFlight.has(zoneId) || leaving !== undefined;
@@ -1306,7 +1528,7 @@ export class GeniusHubApp {
       answerBy,
       beforeSend: () => {
         if (this.session !== session) {
-          throw this.refusal(T.command.noSession);
+          throw this.refusal(T.command.configChanged);
         }
       },
     };
@@ -1321,23 +1543,53 @@ export class GeniusHubApp {
         throw failure;
       }
     }
-    if (sticky || failure) {
-      // The write may be applied after a setting that left before it, or
-      // may not have been applied: the follow-ups write "Off" again if needed.
-      const at = this.monotonic();
-      this.sticky.set(zoneId, {
-        until: this.now() + COMMAND.guard,
-        due: at + COMMAND.guard,
-        resends: 0,
-      });
-      await this.saveState();
-      void this.updateStatus();
-    }
+    // The write may have reached the hub: the reads check it from now on.
+    const guard = this.setGuard(zoneId, { sticky });
+    await this.saveState();
     this.followUp(session, zoneId);
     if (failure) {
+      void this.updateStatus();
       throw failure;
     }
-    await this.readBack(session, zoneId, answerBy);
+    const back = await this.readBack(session, zoneId, answerBy);
+    if (back === undefined) {
+      void this.updateStatus();
+      throw this.refusal(T.command.offUnchecked);
+    }
+    if (back.mode !== 'off') {
+      guard.failed = true;
+      this.logger.warn(`genius-hub zone ${zoneId}: "off" not applied by the hub`);
+      await this.saveState();
+      void this.updateStatus();
+      throw this.refusal(T.command.offNotApplied(back.mode));
+    }
+    if (!guard.sticky) {
+      // Confirmed: the guard is lifted.
+      this.guards.delete(zoneId);
+      await this.saveState();
+    }
+    void this.updateStatus();
+  }
+
+  /** Turns a zone off at once (a value read back beyond the bounds): sticky guard, not awaited. */
+  emergencyOff(session, zoneId) {
+    this.stopEpoch.set(zoneId, (this.stopEpoch.get(zoneId) ?? 0) + 1);
+    this.setGuard(zoneId, { sticky: true });
+    const received = this.now();
+    void this.write(
+      session,
+      zoneId,
+      { iMode: ZONE_MODE.OFF },
+      { startBy: received + COMMAND.sendBy, answerBy: received + COMMAND.answerBy },
+    )
+      .catch((err) =>
+        this.logger.warn(`genius-hub zone ${zoneId}: "off" failed (${err?.code ?? 'error'})`),
+      )
+      .then(async () => {
+        await this.saveState();
+        await this.updateStatus();
+        this.followUp(session, zoneId);
+      });
   }
 
   /** After a command: follow-up reads of the zones, 5 s then 20 s after it, grouped (one timer). */
@@ -1348,6 +1600,23 @@ export class GeniusHubApp {
       this.follow.due.push(mono + delay);
     }
     this.scheduleFollowUp(session);
+  }
+
+  /**
+   * While an "off" guard lasts, a read of the zones within `delay` (outside
+   * the pace): after a restart, after a save of the form, between the
+   * follow-ups of a command.
+   */
+  guardFollowUps(delay) {
+    const mono = this.monotonic();
+    if ([...this.guards.values()].every((g) => mono >= g.due)) {
+      return;
+    }
+    const at = mono + delay;
+    if (!this.follow.due.some((d) => d > mono && d <= at)) {
+      this.follow.due.push(at);
+    }
+    this.scheduleFollowUp(this.session);
   }
 
   scheduleFollowUp(session) {
@@ -1369,38 +1638,59 @@ export class GeniusHubApp {
     const mono = this.monotonic();
     this.follow.due = this.follow.due.filter((at) => at > mono);
     if (session !== this.session || !this.running) {
-      this.follow.due = [];
+      // Another session: its own follow-ups (a start schedules them).
+      this.scheduleFollowUp(this.session);
       return;
     }
     try {
       const fresh = await session.client.zones();
       if (session !== this.session || !this.running) return;
       this.publishZones(fresh.value, { force: false });
-      await this.enforceSticky(fresh.value, this.monotonic(), () => session !== this.session);
+      await this.enforceGuards(fresh.value, this.monotonic(), () => session !== this.session);
       void this.publisher.flush();
     } catch (err) {
       this.logger.warn(`genius-hub follow-up read failed (${err?.code ?? err?.name ?? 'error'})`);
     }
+    this.guardFollowUps(COMMAND.guardEvery);
     this.scheduleFollowUp(session);
   }
 
   /**
-   * The sticky "off" guards against a read of the zones: a guarded zone
-   * read on is written "Off" again (3 times at most); a guard whose time
-   * is over is dropped.
+   * The "off" guards against a read of the zones: a guarded zone read on is
+   * written "Off" again (3 times at most) and said in the status; a plain
+   * guard is lifted by a read showing the zone off; a guard whose time is
+   * over is dropped.
    */
-  async enforceSticky(zones, mono, gone) {
-    if (this.sticky.size === 0) return;
+  async enforceGuards(zones, mono, gone) {
+    if (this.guards.size === 0) return;
     const session = this.session;
     let changed = false;
-    for (const [zoneId, guard] of [...this.sticky]) {
+    for (const [zoneId, guard] of [...this.guards]) {
       if (mono >= guard.due) {
-        this.sticky.delete(zoneId);
+        this.guards.delete(zoneId);
         changed = true;
         continue;
       }
       const zone = zones.find((z) => z.id === zoneId);
-      if (!zone || zone.mode === 'off' || guard.resends >= COMMAND.resends) {
+      if (!zone) {
+        continue;
+      }
+      if (zone.mode === 'off') {
+        if (guard.failed) {
+          guard.failed = false;
+          changed = true;
+        }
+        if (!guard.sticky) {
+          this.guards.delete(zoneId);
+          changed = true;
+        }
+        continue;
+      }
+      if (!guard.failed) {
+        guard.failed = true;
+        changed = true;
+      }
+      if (guard.resends >= COMMAND.resends) {
         continue;
       }
       guard.resends += 1;
@@ -1425,6 +1715,7 @@ export class GeniusHubApp {
     }
     if (changed) {
       await this.saveState();
+      await this.updateStatus();
     }
   }
 

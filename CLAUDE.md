@@ -58,12 +58,18 @@ test/helpers/       the app on the fake Gladys, a scripted hub, a virtual clock
 - **Clocks**: `now` (wall) for /data and the command deadlines, `monotonic`
   for the pace, pauses, guards and freshness; one clock read per decision
   (`dueAt(mono)`), never a second read that would cap "now".
-- **Never read the hub sooner than the interval**, whatever asks; the
-  follow-ups after a command read the zones only.
-- **"Off" is never blocked** by an option, a pause, a refused login, a read
-  queue or another hub; every other command is decided on a fresh read, within
-  its budget, with its option checked on arrival, after the read and in
-  `beforeSend`. Setpoints bounded module-side (hot water never above 60 °C).
+- **Never read the hub sooner than the interval**, whatever asks; the reads
+  outside the pace are the zones (and the release) of a command, its
+  follow-ups at 5 s and 20 s, and every 20 s while an "off" guard lasts.
+- **"Off"** needs no option and goes through a pause, a refused login, the
+  read queue and another hub; its refusal cases are listed in `docs/*.md`
+  (configuration not loaded in time, address or login not set, the budget,
+  a rejection, no read-back showing the zone off): keep that list exact.
+  Every other command is decided on a fresh read (identity + zones), within
+  its budget, its option checked on arrival, after the read and in
+  `beforeSend`, and is a success only when the read-back shows what was
+  written. Every setpoint written is bounded module-side, the one taken from
+  the hub by an override or a boost included (hot water never above 60 °C).
 - Never log or put in a status, an error or /data the password (only an
   8-bit salted tag of a refused one). Never add a call outside `HubClient`.
 - Our own words only in the texts: the error codes of `HubError`, the zone

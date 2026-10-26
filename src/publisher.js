@@ -31,7 +31,7 @@ export class StatePublisher {
     this.timers = timers;
     this.perMinute = perMinute;
     this.heartbeat = heartbeat;
-    /** featureId -> { state } | { text } */
+    /** featureId -> { value: { state } | { text }, heartbeat } */
     this.pending = new Map();
     /** Monotonic send times of the last minute. */
     this.window = [];
@@ -39,13 +39,17 @@ export class StatePublisher {
     this.flushing = undefined;
   }
 
-  /** Queues states (`{ device_feature_external_id, state | text }`); `force` re-sends even an equal value. */
-  push(states, { force = false } = {}) {
+  /**
+   * Queues states (`{ device_feature_external_id, state | text }`); `force`
+   * re-sends even an equal value; `heartbeat: false` sends a value only when
+   * it changed, never again as a heartbeat (a value without a date of its own).
+   */
+  push(states, { force = false, heartbeat = true } = {}) {
     for (const { device_feature_external_id: id, ...value } of states) {
       if (force) {
         this.gladys.forgetPublishedStates?.(id);
       }
-      this.pending.set(id, value);
+      this.pending.set(id, { value, heartbeat });
     }
   }
 
@@ -89,25 +93,37 @@ export class StatePublisher {
     if (room <= 0 || this.pending.size === 0) {
       return;
     }
-    const batch = [];
-    for (const [id, value] of this.pending) {
-      if (batch.length >= room) {
+    const groups = { beat: [], plain: [] };
+    let taken = 0;
+    for (const [id, entry] of this.pending) {
+      if (taken >= room) {
         break;
       }
+      taken += 1;
       this.pending.delete(id);
-      batch.push({ device_feature_external_id: id, ...value });
+      groups[entry.heartbeat ? 'beat' : 'plain'].push({ id, entry });
     }
-    try {
-      const result = await this.gladys.publishChangedStates(batch, { heartbeat: this.heartbeat });
-      for (let i = 0; i < (result?.count ?? batch.length); i += 1) {
-        this.window.push(now);
-      }
-    } catch (err) {
-      this.logger.warn(`Publishing the Genius Hub values failed (${err?.name ?? 'Error'})`);
-      // Kept for the next round, unless a newer value arrived meanwhile.
-      for (const { device_feature_external_id: id, ...value } of batch) {
-        if (!this.pending.has(id)) {
-          this.pending.set(id, value);
+    for (const [name, list] of Object.entries(groups)) {
+      if (list.length === 0) continue;
+      const batch = list.map(({ id, entry }) => ({
+        device_feature_external_id: id,
+        ...entry.value,
+      }));
+      try {
+        const result = await this.gladys.publishChangedStates(
+          batch,
+          name === 'beat' ? { heartbeat: this.heartbeat } : {},
+        );
+        for (let i = 0; i < (result?.count ?? batch.length); i += 1) {
+          this.window.push(now);
+        }
+      } catch (err) {
+        this.logger.warn(`Publishing the Genius Hub values failed (${err?.name ?? 'Error'})`);
+        // Kept for the next round, unless a newer value arrived meanwhile.
+        for (const { id, entry } of list) {
+          if (!this.pending.has(id)) {
+            this.pending.set(id, entry);
+          }
         }
       }
     }

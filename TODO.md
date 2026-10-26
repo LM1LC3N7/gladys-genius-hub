@@ -42,7 +42,11 @@ up to date at the end of every milestone.
 - The `error` numbers of a rejected PATCH, and whether `PATCH /v3/zone/<id>`
   (the library's call) or `PUT` is expected by recent hub releases.
 - Whether a wrong login gives 401 (final stop here) or 503 (a pause here,
-  since 503 is also "the hub is offline" in the library's table).
+  with a status asking to check the login; the library's table says 503 =
+  "the authorization information is invalid", 502 = "the hub is offline").
+- Whether the read-back right after a PATCH already shows the new mode and
+  setpoint (the ack depends on it; a hub slower to apply would answer
+  "sent, the reads of 5 s and 20 s tell").
 - The `Date` header of the hub (used for the staleness of the devices) and
   whether `lastComms` is Unix seconds on every device.
 - The time the hub takes for `data_manager` on a large house (the budget of
@@ -95,5 +99,18 @@ up to date at the end of every milestone.
 - **Freshness**: devices published only when `lastComms` advanced, never
   when older than 2 h (hub's `Date` header); zones at every read.
 - **Refused login**: 401/403 on the release page is final (8-bit salted
-  tag of the password in /data, never the password); 503 is a pause.
+  tag of the password in /data, never the password); 401/403 on the zones
+  or devices page is "page refused" (spaced up to 1 h, the zones still
+  published); 503 is a pause whose status says it may be the login, and a
+  new address or login ends the pause.
+- **Confirmation (review r1)**: a command is a success only when the zone
+  read back shows the mode and setpoint written; a read-back beyond the
+  bounds turns the zone off. Every "off" sets a guard of 2 min kept in
+  /data, checked by reads every 20 s (after a restart too), "off" written
+  again 3 times at most, lifted by a read showing off unless sticky.
+- **Fresh read of a command**: release (identity) + zones, outside the read
+  queue, shared by the commands arriving before it leaves (`setImmediate`).
+- **Weather temperature**: a zone with the issue `zone:using_weather_temp`
+  publishes no temperature; a channel takes its node's `lastComms`; a
+  device without any is sent on change only (no heartbeat).
 - The template's demo files were removed with `git rm`.

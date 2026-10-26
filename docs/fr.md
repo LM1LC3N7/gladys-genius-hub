@@ -31,9 +31,10 @@ module OpenTherm ne sont pas proposés.
 2. Saisissez le **nom d'utilisateur et le mot de passe du hub** (ceux de son
    interface web locale, tels que le hub les demande ; pas le compte
    my.geniushub.co.uk). Le mot de passe est gardé par Gladys dans sa base,
-   jamais réaffiché, jamais écrit dans les journaux, envoyé seulement au
-   hub, comme il le demande (HTTP sur votre réseau, le mot de passe sous
-   forme de hachage).
+   jamais réaffiché, jamais écrit dans les journaux, et envoyé seulement au
+   hub sous la forme qu'il demande : un hachage qui suffit à se connecter
+   au hub, envoyé en HTTP simple, donc lisible par quiconque peut observer
+   votre réseau local.
 3. Enregistrez, puis ouvrez l'onglet **Découverte** et créez les zones et
    appareils voulus.
 4. Les commandes sont **désactivées par défaut** : activez « Autoriser les
@@ -41,8 +42,10 @@ module OpenTherm ne sont pas proposés.
    marche » quand vous voulez piloter le chauffage depuis Gladys. « Arrêt »
    n'a pas besoin d'option.
 
-Le hub est lu toutes les 60 s par défaut (jamais moins), et les zones à
-nouveau 5 s et 20 s après une commande.
+Le hub est lu toutes les 60 s par défaut (60 s au moins). En dehors de ce
+rythme, les zones sont aussi lues : juste avant et juste après une commande,
+5 s et 20 s après, et toutes les 20 s pendant la vérification d'un « Arrêt »
+(deux minutes au plus, y compris après un redémarrage de l'intégration).
 
 ## Les commandes en détail
 
@@ -53,60 +56,120 @@ nouveau 5 s et 20 s après une commande.
   « Consigne de pièce la plus haute » (25 °C par défaut). Eau chaude :
   degrés entiers, de 30 à 60 °C, plafonnés par « Consigne d'eau chaude la
   plus haute » (55 °C par défaut, 60 au plus).
-- **Mode du thermostat** : « Chauffage » met la zone sur son timer ;
-  « Arrêt » l'arrête. **Mode Genius** : off, timer, footprint (zones avec
-  détecteur de présence seulement), override (la consigne actuelle pour la
-  durée configurée). **Mode eau chaude** : arrêt, timer, override (boost à
-  la consigne actuelle). **Zone marche/arrêt** : « marche » est une
-  dérogation de la durée configurée, « arrêt » arrête la zone.
-- Avant qu'une consigne, un mode ou une « marche » ne parte, les zones sont
-  relues : la commande est décidée sur cette lecture fraîche, jamais sur des
-  valeurs en mémoire. Elle est refusée, rien envoyé, quand : son option est
-  désactivée ; la valeur n'est pas valide ou hors des bornes ci-dessus ; le
-  hub ne liste pas la zone, ou la liste avec un autre type ; un autre hub
-  répond à l'adresse (lancez un Scan pour l'adopter) ; le hub refuse les
-  identifiants ; le hub a demandé d'attendre après une erreur (une pause) ;
-  la zone traite encore une commande ou une est partie il y a moins de 2 s ;
-  « Arrêt » a été envoyé à la zone il y a moins de 2 min (voir ci-dessous) ;
-  le hub a mis plus d'environ 3 s à répondre à la lecture fraîche. Le
-  message du refus dit laquelle.
+- **Mode du thermostat** : « Chauffage » met la zone sur son timer, c'est-à-
+  dire le programme gardé dans le hub : ses consignes sont celles du hub,
+  les plafonds de l'intégration ne les couvrent pas. « Arrêt » arrête la
+  zone. **Mode Genius** : off, timer (le programme du hub), footprint (zones
+  avec détecteur de présence seulement), override (la consigne que le hub
+  montre maintenant, pour la durée configurée, seulement si elle est dans
+  les bornes ci-dessus ; sinon refusé : envoyez une consigne). **Mode eau
+  chaude** : arrêt, timer (le programme du hub), override (boost à la
+  consigne que le hub montre maintenant, seulement si elle est dans les
+  bornes ci-dessus ; sinon refusé). **Zone marche/arrêt** : « marche » est
+  une dérogation de la durée configurée, « arrêt » arrête la zone.
+- Une consigne, un mode ou une « marche » est décidé sur une lecture
+  fraîche du hub (son identité et ses zones), faite pour la commande ; la
+  pause, des identifiants refusés et la garde d'un « Arrêt » viennent de ce
+  que l'intégration sait. La commande n'est réussie que si la zone relue
+  juste après montre le mode écrit, et pour une dérogation sa consigne (à
+  0,05 °C près) et une durée dans celle configurée. Une commande qui ne
+  changerait rien (la zone est déjà ainsi) est réussie sans rien envoyer.
+  La commande est refusée, **rien envoyé**, quand :
+  - son option est désactivée ;
+  - la valeur n'est pas valide ou hors des bornes ci-dessus ;
+  - la consigne que garderait une dérogation ou un boost est hors des
+    bornes (ou inconnue) ;
+  - le hub ne liste pas la zone, ou la liste avec un autre type ;
+  - un autre hub répond à l'adresse (dans la dernière lecture périodique ou
+    dans la lecture fraîche ; lancez un Scan pour l'adopter), ou le hub n'a
+    jamais été lu ;
+  - le hub refuse les identifiants ;
+  - le hub a demandé d'attendre après une erreur (une pause) ;
+  - la zone traite encore une commande ou une est partie il y a moins de
+    2 s ;
+  - un « Arrêt » de la zone est encore vérifié (deux minutes au plus, voir
+    ci-dessous) ;
+  - la lecture fraîche a échoué : pas de réponse en 2 s environ (« trop
+    lent »), hub injoignable, réponse trop grande ou qui n'est pas d'un
+    Genius Hub, page refusée aux identifiants ;
+  - la configuration de l'intégration a changé pendant la commande ;
+  - la requête n'a pas pu partir dans les 3,5 s environ après le clic ;
+  - le hub était injoignable à l'envoi.
+
+  Elle est refusée **après envoi** quand :
+  - le hub la rejette (numéro d'erreur dans le message) : non appliquée ;
+  - le hub ne répond pas, ou répond une erreur serveur : « envoyée, sans
+    confirmation » ;
+  - la zone ne peut pas être relue à temps : « envoyée, les relectures à
+    5 s et 20 s diront » ;
+  - la zone relue montre un autre mode, ou une autre consigne (« le hub a
+    appliqué X au lieu de Y ») ;
+  - la zone relue montre une consigne ou une durée hors des bornes de
+    l'intégration : « Arrêt » est alors envoyé aussitôt à la zone.
+
 - **« Arrêt »** (mode du thermostat, mode Genius, mode eau chaude ou état
-  marche/arrêt) n'a pas besoin d'option, n'attend aucune lecture, passe
-  pendant une pause et malgré des identifiants refusés (un essai), et annule
-  une consigne ou un mode de la même zone pas encore envoyé. Il est refusé,
-  rien envoyé, seulement quand : l'adresse ou les identifiants du hub ne
-  sont pas renseignés ; la requête n'a pas pu partir en environ 3 s (une
-  écriture de la même zone encore en train de partir, un hub qui refuse la
-  connexion) ; le hub la rejette (numéro d'erreur dans le message). Quand
-  une consigne ou un mode de la zone est parti moins de 2 min avant
-  l'« Arrêt », le hub peut encore l'appliquer après : l'« Arrêt » est alors
-  **maintenu** pendant 2 min (les relectures le réécrivent si la zone se
-  montre en marche, 3 fois au plus) et aucune commande qui relancerait la
-  zone n'est prise entre-temps ; l'état le dit.
-- Une écriture à laquelle le hub n'a pas répondu (silence, connexion coupée,
-  erreur serveur) est annoncée « envoyée, sans confirmation » : les lectures
-  suivantes montrent si le hub l'a appliquée. Une écriture à laquelle le hub
-  a répondu est relue aussitôt quand le budget le permet, et dans tous les
-  cas 5 s et 20 s après.
+  marche/arrêt) n'a pas besoin d'option, ne fait pas de lecture fraîche,
+  passe pendant une pause et malgré des identifiants refusés (un essai), et
+  annule une consigne ou un mode de la même zone pas encore envoyé. Il n'est
+  réussi que si la zone relue est arrêtée. Il est refusé, **rien envoyé**,
+  quand :
+  - la configuration de l'intégration n'est pas encore lue depuis Gladys et
+    n'arrive pas en 3 s environ ;
+  - l'adresse ou les identifiants du hub ne sont pas renseignés ;
+  - une écriture de la même zone en train de partir ne part pas en 3 s
+    environ ;
+  - la configuration de l'intégration a changé entre-temps ;
+  - la requête n'a pas pu partir en 3,5 s environ, ou le hub a refusé la
+    connexion.
+
+  Il est refusé **après envoi** quand :
+  - le hub le rejette, refuse les identifiants ou n'a pas cette page (non
+    appliqué, le message dit lequel) ;
+  - le hub ne répond pas, ou répond une erreur serveur : « envoyé, sans
+    confirmation » ;
+  - la zone ne peut pas être relue à temps ;
+  - la zone relue est encore en marche.
+
+  Dans les trois derniers cas, et après tout « Arrêt » accepté par le hub,
+  la zone est vérifiée pendant deux minutes : tant qu'une lecture la montre
+  en marche, « Arrêt » est réécrit (3 fois au plus), l'état dit « Arrêt n'a
+  pas pris effet », et aucune commande qui relancerait la zone n'est prise.
+  Une lecture qui montre la zone arrêtée termine la vérification, sauf
+  quand une consigne ou un mode de la zone est parti moins de 2 min avant
+  l'« Arrêt » (le hub peut encore l'appliquer après) : la vérification dure
+  alors ses deux minutes.
 
 ## Valeurs
 
-- Les valeurs d'une zone sont publiées à chaque lecture. Celles d'un
-  appareil relié au hub ne le sont que quand l'appareil a communiqué avec le
-  hub depuis les dernières valeurs publiées (le hub donne l'heure de sa
-  dernière communication), et pas quand c'était il y a plus de 2 h : l'état
-  compte alors ces appareils.
-- Les valeurs inchangées sont renvoyées toutes les 30 min.
+- Les valeurs d'une zone sont publiées à chaque lecture. Quand le hub
+  signale qu'une zone utilise la température extérieure (ses capteurs ne
+  répondent plus, anomalie `zone:using_weather_temp`), la température de
+  cette zone n'est pas publiée ; le texte des anomalies le dit.
+- Les valeurs d'un appareil relié au hub ne sont publiées que quand
+  l'appareil (pour un canal, son nœud) a communiqué avec le hub depuis les
+  dernières valeurs publiées (le hub donne l'heure de sa dernière
+  communication), et pas quand c'était il y a plus de 2 h : l'état compte
+  alors ces appareils. Un appareil qui ne donne pas cette heure est publié
+  quand une valeur change, et n'est pas renvoyé sinon.
+- Les valeurs inchangées des zones et des appareils datés sont renvoyées
+  toutes les 30 min.
 
 ## État et pauses
 
-- Des identifiants refusés par le hub (HTTP 401 ou 403) arrêtent les
-  lectures jusqu'à ce que vous les changiez ou cliquiez sur « Tester la
-  connexion », qui réessaie une fois.
-- Après un 429 ou un 5xx du hub, les lectures font une pause (1 min, doublée
-  jusqu'à 6 h, ou le délai demandé par le hub), gardée au redémarrage. Un
-  hub injoignable est réessayé après 30 s, 1 min, 2 min... jusqu'à 10 min,
-  jamais plus tôt que l'intervalle de lecture.
+- Des identifiants refusés par le hub sur sa page principale (HTTP 401 ou 403) arrêtent les lectures jusqu'à ce que vous les changiez ou cliquiez
+  sur « Tester la connexion » (une lecture part dès la fin de l'intervalle
+  de lecture). Une page des zones ou des appareils refusée à des
+  identifiants acceptés n'est pas un refus d'identifiants : cette page est
+  réessayée plus tard (les zones après 30 s, doublé ; les appareils après
+  deux intervalles, doublé), jusqu'à 1 h.
+- Après un 429 ou un 5xx du hub, les lectures font une pause (1 min,
+  doublée jusqu'à 6 h, ou le délai demandé par le hub), gardée au
+  redémarrage. Le hub répond aussi 503 à des identifiants faux : l'état le
+  dit. Changer l'adresse, le nom d'utilisateur ou le mot de passe termine la
+  pause. Un hub injoignable est réessayé après 30 s, 1 min, 2 min...
+  jusqu'à 10 min, jamais plus tôt que l'intervalle de lecture.
+- Quand la configuration ne peut pas être lue depuis Gladys au démarrage,
+  elle est relue après 5 s, doublé jusqu'à 5 min, et l'état le dit.
 - Le hub est reconnu par son identifiant unique. Si un autre hub répond à
   l'adresse, rien n'est publié vers les appareils de l'ancien tant que vous
   n'avez pas lancé un Scan depuis l'onglet Découverte, qui adopte le nouveau

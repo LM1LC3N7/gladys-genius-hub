@@ -80,6 +80,9 @@ const CHANNELS = {
   Motion: 'motion',
 };
 
+/** The issue the hub raises when a zone uses the outside temperature (issue.py). */
+export const WEATHER_ISSUE = 'zone:using_weather_temp';
+
 /** A device address of the hub: a node number, with a channel ("12-1") at most. */
 export const DEVICE_ADDR = /^\d{1,5}(?:-\d{1,3})?$/;
 /** A zone id: a small whole number. */
@@ -154,13 +157,17 @@ export function parseZone(raw) {
       }))
     : [];
   const heating = numberOf(raw.bOutRequestHeat);
+  // The sensors of the zone are silent: the hub takes the outside
+  // temperature instead (issue.py), which is never the room's.
+  const usingWeather = issues.some((issue) => issue.id === WEATHER_ISSUE);
   return {
     id: raw.iID,
     name: nameOf(raw.strName) || `Zone ${raw.iID}`,
     kind,
     mode,
-    /** The temperature measured by the zone (room, or hot water probe). */
-    temperature: temperatureOf(raw.fPV),
+    /** The temperature measured by the zone (room, or hot water probe); none when it is the weather's. */
+    temperature: usingWeather ? undefined : temperatureOf(raw.fPV),
+    usingWeather,
     /** The setpoint in force (the schedule's, or the override's). */
     setpoint: kind === ZONE_KIND.ON_OFF ? undefined : temperatureOf(raw.fSP),
     /** On/off zones: whether the schedule or the override asks for "on". */
@@ -213,8 +220,8 @@ function channelsOf(childValues) {
   return values;
 }
 
-/** One device node (or one channel of it) -> our device, or undefined. */
-function parseNode(raw, addr) {
+/** One device node (or one channel of it, `inherited` = the lastComms of its node) -> our device, or undefined. */
+function parseNode(raw, addr, inherited) {
   if (!isObject(raw) || !DEVICE_ADDR.test(addr)) {
     return undefined;
   }
@@ -224,10 +231,12 @@ function parseNode(raw, addr) {
   const channels = channelsOf(values);
   const cfg = isObject(raw.childNodes) && isObject(raw.childNodes._cfg) ? raw.childNodes._cfg : {};
   const cfgValues = isObject(cfg.childValues) ? cfg.childValues : {};
-  const lastComms =
+  const own =
     isObject(values.lastComms) && Number.isInteger(values.lastComms.val) && values.lastComms.val > 0
       ? values.lastComms.val
       : undefined;
+  // A channel carries no lastComms of its own: it is the node's radio that talks.
+  const lastComms = own ?? inherited;
   const device = {
     addr,
     hash: hash.slice(0, 40),
@@ -263,24 +272,25 @@ export function parseDevices(json) {
   }
   const devices = [];
   const seen = new Set();
-  const add = (raw, addr) => {
-    if (devices.length >= MAX_DEVICES || seen.has(addr)) return;
-    const device = parseNode(raw, addr);
+  const add = (raw, addr, inherited) => {
+    if (devices.length >= MAX_DEVICES || seen.has(addr)) return undefined;
+    const device = parseNode(raw, addr, inherited);
     if (device) {
       seen.add(addr);
       devices.push(device);
     }
+    return device;
   };
   for (const [, site] of plainEntries(json.data.childNodes)) {
     if (!isObject(site) || site.addr === 'WeatherData' || !isObject(site.childNodes)) continue;
     for (const [, node] of plainEntries(site.childNodes)) {
       if (!isObject(node) || typeof node.addr !== 'string' || node.addr === '1') continue;
-      add(node, node.addr);
+      const parent = add(node, node.addr) ?? parseNode(node, node.addr);
       for (const [, channel] of plainEntries(isObject(node.childNodes) ? node.childNodes : {})) {
         if (!isObject(channel) || typeof channel.addr !== 'string' || channel.addr === '_cfg') {
           continue;
         }
-        add(channel, `${node.addr}-${channel.addr}`);
+        add(channel, `${node.addr}-${channel.addr}`, parent?.lastComms);
       }
     }
   }

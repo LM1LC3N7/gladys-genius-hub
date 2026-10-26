@@ -36,6 +36,7 @@ test('zones: the kinds, the modes, the values of the fixtures', () => {
       kind: ZONE_KIND.RADIATOR,
       mode: 'timer',
       temperature: 20.5,
+      usingWeather: false,
       setpoint: 21,
       on: undefined,
       overrideSetpoint: 0,
@@ -51,6 +52,12 @@ test('zones: the kinds, the modes, the values of the fixtures', () => {
   assert.equal(byId[ZONE.KITCHEN].hasPir, false);
   assert.equal(byId[ZONE.KITCHEN].occupied, undefined);
   assert.deepEqual(byId[ZONE.KITCHEN].issues, [{ id: 'zone:using_weather_temp', level: 1 }]);
+  assert.equal(byId[ZONE.KITCHEN].usingWeather, true);
+  assert.equal(
+    byId[ZONE.KITCHEN].temperature,
+    undefined,
+    'the outside temperature is not the room',
+  );
   assert.equal(byId[ZONE.FLOOR].kind, ZONE_KIND.UNDERFLOOR);
   assert.equal(byId[ZONE.WATER].kind, ZONE_KIND.HOT_WATER);
   assert.equal(byId[ZONE.WATER].mode, 'override');
@@ -115,6 +122,7 @@ test('devices: the nodes and channels of data_manager, the hub and the weather l
   assert.equal(plug.battery, undefined);
   const channel = devices[3];
   assert.equal(channel.output, 1);
+  assert.equal(channel.lastComms, plug.lastComms, 'a channel takes the lastComms of its node');
   assert.equal(channel.model, undefined);
   const pir = devices[4];
   assert.equal(pir.luminance, 120);

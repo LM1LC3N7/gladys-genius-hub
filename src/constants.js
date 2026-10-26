@@ -163,6 +163,17 @@ export const COMMAND = {
   spacing: 2 * SECOND,
   /** A non-protective write that left within this delay before an "off" makes it sticky. */
   guard: 2 * MINUTE,
-  /** A sticky "off" is written again at most this many times by the follow-ups. */
+  /** A guarded "off" is written again at most this many times by the follow-ups. */
   resends: 3,
+  /** While an "off" guard lasts, the zones are read again this often (outside the pace). */
+  guardEvery: 20 * SECOND,
+  /** A read-back matches the setpoint written within this (°C). */
+  tolerance: 0.05,
+  /** A read-back may show this much more override time than written (s). */
+  overrideSlack: 60,
 };
+
+/** A page refused to the login (401/403 on the zones or the devices): tried again, doubled up to 1 h. */
+export const PAGE_RETRY_MAX = HOUR;
+/** The configuration could not be read from Gladys: tried again after 5 s, doubled up to 5 min. */
+export const CONFIG_RETRY = { min: 5 * SECOND, max: 5 * MINUTE };

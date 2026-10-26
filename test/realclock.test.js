@@ -15,16 +15,17 @@ import { GeniusHubApp } from '../src/app.js';
 import { registerHandlers } from '../src/handlers.js';
 import { POLL_INTERVAL } from '../src/constants.js';
 import { createMemoryStore } from '../src/store.js';
-import { CONFIG, dataManagerPage, patchOk, releasePage, zonesPage } from './fixtures/genius.js';
-import { createdZone } from './helpers/app.js';
+import { CONFIG, dataManagerPage, patchOk, releasePage, zones } from './fixtures/genius.js';
+import { applyPatch, createdZone } from './helpers/app.js';
 
 const SPEED = 100;
 const INTERVAL = POLL_INTERVAL.default * 1000;
 
 test('real clock: reads at 0, the interval and twice the interval; a command fits its budget', async () => {
+  const list = zones();
   const pages = {
     '/v3/auth/release': releasePage(),
-    '/v3/zones': zonesPage(),
+    '/v3/zones': { data: list },
     '/v3/data_manager': dataManagerPage(),
   };
   const reads = [];
@@ -37,12 +38,14 @@ test('real clock: reads at 0, the interval and twice the interval; a command fit
       });
       req.on('end', () => {
         patches.push({ url: req.url, body: JSON.parse(body) });
+        applyPatch(list, Number(req.url.split('/').pop()), JSON.parse(body));
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify(patchOk()));
       });
       return;
     }
-    if (req.url === '/v3/auth/release') reads.push(performance.now() * SPEED);
+    // The periodic reads only (a command reads the release and the zones too).
+    if (req.url === '/v3/data_manager') reads.push(performance.now() * SPEED);
     const body = pages[req.url];
     res.writeHead(body ? 200 : 404, { 'content-type': 'application/json' });
     res.end(JSON.stringify(body ?? {}));

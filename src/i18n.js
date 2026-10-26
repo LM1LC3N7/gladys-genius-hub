@@ -31,6 +31,10 @@ const REASON = {
   server: { en: 'error of the hub', fr: 'erreur du hub' },
   rate_limited: { en: 'too many requests', fr: 'trop de requêtes' },
   refused: { en: 'login refused', fr: 'identifiants refusés' },
+  page_refused: {
+    en: 'access to this page refused to this login',
+    fr: 'accès à cette page refusé à ces identifiants',
+  },
   too_large: { en: 'answer too large', fr: 'réponse trop grande' },
   not_json: { en: 'answer that is not data', fr: 'réponse qui n’est pas une donnée' },
   unknown_answer: {
@@ -48,7 +52,18 @@ export function reason(err) {
       ? ` ${err.status}`
       : '';
   const error = err?.code === 'rejected' && Number.isInteger(err.error) ? ` (${err.error})` : '';
-  return { en: `${text.en}${status}${error}`, fr: `${text.fr}${status}${error}` };
+  // geniushub-client (const.py): the hub answers 503 to a wrong login too.
+  const login =
+    err?.code === 'server' && err.status === 503
+      ? {
+          en: ', also given for a wrong login: check the user name and password',
+          fr: ', aussi renvoyée pour des identifiants faux : vérifiez-les',
+        }
+      : { en: '', fr: '' };
+  return {
+    en: `${text.en}${status}${error}${login.en}`,
+    fr: `${text.fr}${status}${error}${login.fr}`,
+  };
 }
 
 const list = (items) => items.join(', ');
@@ -89,8 +104,8 @@ export const T = {
   refused: (address, notes = []) =>
     withNotes(
       {
-        en: `The Genius Hub at ${address} refuses this login: reads stopped. Correct the user name or the password and save, or click "Test the connection" to try once more.`,
-        fr: `Le Genius Hub à l’adresse ${address} refuse ces identifiants : lectures arrêtées. Corrigez le nom d’utilisateur ou le mot de passe et enregistrez, ou cliquez sur « Tester la connexion » pour réessayer une fois.`,
+        en: `The Genius Hub at ${address} refuses this login: reads stopped. Correct the user name or the password and save. If you already did, click "Test the connection": a read leaves once the read interval is over.`,
+        fr: `Le Genius Hub à l’adresse ${address} refuse ces identifiants : lectures arrêtées. Corrigez le nom d’utilisateur ou le mot de passe et enregistrez. Si c’est déjà fait, cliquez sur « Tester la connexion » : une lecture part dès la fin de l’intervalle de lecture.`,
       },
       notes,
     ),
@@ -134,7 +149,15 @@ export const T = {
       },
       notes,
     ),
+  configRetry: (wait) => ({
+    en: `The configuration of the integration could not be read from Gladys: new try in ${delay(wait).en}.`,
+    fr: `La configuration de l’intégration n’a pas pu être lue depuis Gladys : nouvel essai dans ${delay(wait).fr}.`,
+  }),
   notes: {
+    offFailed: (names, resends) => ({
+      en: `"Off" did not take effect on zone(s) ${list(names)}: the hub shows them on; it is written again (${resends} times at most within two minutes).`,
+      fr: `« Arrêt » n’a pas pris effet sur la ou les zones ${list(names)} : le hub les montre en marche ; il est réécrit (${resends} fois au plus en deux minutes).`,
+    }),
     noDevice: (names) => ({
       en: `Create the device of zone(s) ${list(names)} from the "Discover" tab to receive their values.`,
       fr: `Créez l’appareil de la ou des zones ${list(names)} depuis l’onglet « Découverte » pour recevoir leurs valeurs.`,
@@ -223,9 +246,49 @@ export const T = {
       fr: 'Une commande de cette zone est encore en cours ou vient de partir : réessayez dans quelques secondes.',
     },
     stopped: {
-      en: '"Off" was sent to this zone just before: nothing sent (an "off" is being enforced for two minutes).',
-      fr: '« Arrêt » vient d’être envoyé à cette zone : rien envoyé (un arrêt est maintenu pendant deux minutes).',
+      en: '"Off" was sent to this zone just before and is still being checked (two minutes at most): nothing sent.',
+      fr: '« Arrêt » vient d’être envoyé à cette zone et est encore vérifié (deux minutes au plus) : rien envoyé.',
     },
+    configChanged: {
+      en: 'The configuration of the integration changed during the command: nothing sent. Send it again.',
+      fr: 'La configuration de l’intégration a changé pendant la commande : rien envoyé. Renvoyez-la.',
+    },
+    notLoaded: {
+      en: 'The configuration of the integration is not read from Gladys yet: nothing sent (see the integration status).',
+      fr: 'La configuration de l’intégration n’est pas encore lue depuis Gladys : rien envoyé (voir l’état de l’intégration).',
+    },
+    notReadYet: {
+      en: 'The hub has not been read yet: nothing sent. Try again after the first read.',
+      fr: 'Le hub n’a pas encore été lu : rien envoyé. Réessayez après la première lecture.',
+    },
+    currentOutOfRange: (value, low, high) => ({
+      en: `The current setpoint of the zone (${value ?? '?'} °C) is outside the bounds of the integration (${low} to ${high} °C): nothing sent. Send a setpoint instead.`,
+      fr: `La consigne actuelle de la zone (${value ?? '?'} °C) est hors des bornes de l’intégration (${low} à ${high} °C) : rien envoyé. Envoyez plutôt une consigne.`,
+    }),
+    sentUnchecked: {
+      en: 'Command sent and accepted by the hub, but the zone could not be read back in time: the reads of 5 s and 20 s tell whether it was applied.',
+      fr: 'Commande envoyée et acceptée par le hub, mais la zone n’a pas pu être relue à temps : les relectures à 5 s et 20 s diront si elle est appliquée.',
+    },
+    modeNotApplied: (shown, wanted) => ({
+      en: `The hub accepted the command but shows the zone in mode "${shown}" instead of "${wanted}".`,
+      fr: `Le hub a accepté la commande mais montre la zone en mode « ${shown} » au lieu de « ${wanted} ».`,
+    }),
+    appliedOther: (shown, wanted) => ({
+      en: `The hub applied ${shown ?? '?'} °C instead of ${wanted} °C.`,
+      fr: `Le hub a appliqué ${shown ?? '?'} °C au lieu de ${wanted} °C.`,
+    }),
+    appliedOutOfBounds: (shown, left) => ({
+      en: `The hub applied values outside the bounds of the integration (${shown ?? '?'} °C, ${Math.round(left / 60)} min): "Off" sent to the zone.`,
+      fr: `Le hub a appliqué des valeurs hors des bornes de l’intégration (${shown ?? '?'} °C, ${Math.round(left / 60)} min) : « Arrêt » envoyé à la zone.`,
+    }),
+    offUnchecked: {
+      en: '"Off" sent and accepted by the hub, but the zone could not be read back in time: the next reads check it and write it again if needed.',
+      fr: '« Arrêt » envoyé et accepté par le hub, mais la zone n’a pas pu être relue à temps : les prochaines relectures le vérifient et le réécrivent si besoin.',
+    },
+    offNotApplied: (shown) => ({
+      en: `The hub accepted "Off" but still shows the zone in mode "${shown}": it is written again by the next reads.`,
+      fr: `Le hub a accepté « Arrêt » mais montre encore la zone en mode « ${shown} » : il est réécrit par les prochaines relectures.`,
+    }),
     tooSlow: {
       en: 'The hub was too slow to answer before the command: nothing sent.',
       fr: 'Le hub a mis trop de temps à répondre avant la commande : rien envoyé.',

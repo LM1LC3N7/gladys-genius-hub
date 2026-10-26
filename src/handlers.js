@@ -27,9 +27,10 @@ export function registerHandlers(gladys, app, logger) {
   // Connection lifecycle: every connection (the first one and each
   // reconnection) publishes the Discovery list and the status again, and
   // every value at the next read.
+  // A failed read of the configuration is tried again by the app.
   gladys.on('connected', async () => {
     try {
-      await app.start(await gladys.getConfig());
+      await app.connected(() => gladys.getConfig());
     } catch (err) {
       logger?.error(`Start failed (${err?.name ?? 'Error'})`);
     }

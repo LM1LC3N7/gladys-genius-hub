@@ -33,7 +33,7 @@ import {
   ROOM_SETPOINT,
   ZONE_KIND,
 } from './constants.js';
-import { DEVICE_ADDR, ZONE_ID } from './model.js';
+import { DEVICE_ADDR, WEATHER_ISSUE, ZONE_ID } from './model.js';
 
 const { THERMOSTAT_MODE, OPERATING_STATE, WATER_HEATER_MODE } = GLADYS;
 
@@ -355,9 +355,13 @@ const issuesText = (issues) =>
   issues.length === 0
     ? 'none'
     : issues
-        .map((i) => i.id)
+        .map((i) =>
+          i.id === WEATHER_ISSUE
+            ? `${i.id} (the hub uses the outside temperature: the room temperature is not sent)`
+            : i.id,
+        )
         .join(', ')
-        .slice(0, 200);
+        .slice(0, 300);
 
 /** The states of a zone reading. */
 export function zoneStates(gladys, zone) {
