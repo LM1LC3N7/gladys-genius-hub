@@ -64,7 +64,19 @@ test('the defaults, the bounds, the flags', () => {
   assert.equal(normalizeConfig({ max_hot_water: 60 }).maxHotWater, 60);
   assert.equal(normalizeConfig({ max_hot_water: 66 }).maxHotWater, 65);
   assert.equal(normalizeConfig({ max_hot_water: 65.5 }).maxHotWater, 65, 'never above 65');
-  assert.equal(normalizeConfig({ max_hot_water: 55.5 }).maxHotWater, 65, 'whole degrees');
+  assert.equal(normalizeConfig({ max_hot_water: 55.5 }).maxHotWater, 55, 'rounded down');
+});
+
+test('a stored hot water ceiling with a decimal is rounded down, never raised to 65', () => {
+  assert.equal(normalizeConfig({ max_hot_water: 59.5 }).maxHotWater, 59);
+  assert.equal(normalizeConfig({ max_hot_water: 57.5 }).maxHotWater, 57);
+  assert.equal(normalizeConfig({ max_hot_water: '59.5' }).maxHotWater, 59);
+  assert.equal(normalizeConfig({ max_hot_water: 55 }).maxHotWater, 55);
+  assert.equal(normalizeConfig({}).maxHotWater, 65, 'absent: 65');
+  assert.equal(normalizeConfig({ max_hot_water: null }).maxHotWater, 65, 'absent: 65');
+  assert.equal(normalizeConfig({ max_hot_water: 20 }).maxHotWater, 30, 'below: the lowest bound');
+  assert.equal(normalizeConfig({ max_hot_water: 'abc' }).maxHotWater, 30, 'not a number: 30');
+  assert.equal(normalizeConfig({ max_hot_water: 1e9 }).maxHotWater, 65);
 });
 
 test('the login: both fields, no ":" in the user name, no control byte; incomplete forms', () => {

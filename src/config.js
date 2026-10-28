@@ -100,6 +100,19 @@ const wholeBounded = (raw, bounds, fallback) => {
   return Number.isInteger(value) ? value : fallback;
 };
 
+/**
+ * The hot water ceiling: a stored number is rounded down to whole degrees and
+ * held within bounds (a stored 59.5 gives 59, never the default). Only an
+ * absent option takes the default; a stored value that is not a number takes
+ * the lowest bound, never a higher ceiling.
+ */
+const ceilingOf = (raw, { min, max }, fallback) => {
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const value = numberOf(raw);
+  if (value === undefined || Number.isNaN(value)) return min;
+  return Math.min(max, Math.max(min, Math.floor(value)));
+};
+
 const flag = (raw) => raw === true || raw === 'true' || raw === 1 || raw === '1';
 
 export function normalizeConfig(raw = {}) {
@@ -127,11 +140,7 @@ export function normalizeConfig(raw = {}) {
     /** The highest room setpoint Gladys may send (Celsius). */
     maxSetpoint: bounded(raw?.max_setpoint, ROOM_SETPOINT, ROOM_SETPOINT.defaultMax),
     /** The highest hot water setpoint Gladys may send (whole Celsius). */
-    maxHotWater: wholeBounded(
-      raw?.max_hot_water,
-      HOT_WATER_SETPOINT,
-      HOT_WATER_SETPOINT.defaultMax,
-    ),
+    maxHotWater: ceilingOf(raw?.max_hot_water, HOT_WATER_SETPOINT, HOT_WATER_SETPOINT.defaultMax),
   };
 }
 

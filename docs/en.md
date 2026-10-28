@@ -51,7 +51,8 @@ at most, after a restart of the integration too).
   app; the zone then goes back to its timer or mode. Room setpoints: 4 to
   28 °C by half degrees, capped by "Highest room setpoint" (25 °C by
   default). Hot water: whole degrees, 30 to 65 °C, capped by "Highest hot
-  water setpoint" (65 °C by default, 65 at most).
+  water setpoint" (65 °C by default, 65 at most; a ceiling with a decimal is
+  rounded down).
 - **Thermostat mode**: "Heating" sets the zone to its timer, that is the
   programme stored in the hub: its setpoints are the hub's, the ceilings of
   the integration do not cover them. "Off" turns the zone off. **Genius

@@ -633,6 +633,11 @@ test('r1-1: an override or a boost never writes a current setpoint outside the b
   water.fSP = 61;
   await wait(3 * SECOND);
   assert.match((await set(Z(4, 'water-mode'), 3)).error, /\(61 °C\) is outside .*30 to 60 °C/);
+  // A stored ceiling with a decimal is rounded down, never raised to 65.
+  await start({ ...ALLOWED, max_hot_water: 57.5 });
+  water.fSP = 58;
+  await wait(3 * SECOND);
+  assert.match((await set(Z(4, 'water-mode'), 3)).error, /\(58 °C\) is outside .*30 to 57 °C/);
   water.fSP = 0;
   await wait(3 * SECOND);
   assert.match((await set(Z(4, 'water-mode'), 3)).error, /\(0 °C\) is outside/);

@@ -12,7 +12,11 @@ the notes of the version's GitHub Release.
 
 ### Changed
 
-- Hot water ceiling raised to 65 °C (default 65 °C), device limits still apply.
+- Hot water ceiling raised to 65 °C (default 65 °C), whole degrees 30-65 °C.
+
+### Fixed
+
+- A stored hot water ceiling with a decimal (59.5) is rounded down (59), never replaced by the default.
 
 ## [0.1.2] - 2026-10-26
 

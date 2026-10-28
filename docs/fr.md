@@ -55,7 +55,8 @@ rythme, les zones sont aussi lues : juste avant et juste après une commande,
   mode. Consignes de pièce : de 4 à 28 °C par demi-degré, plafonnées par
   « Consigne de pièce la plus haute » (25 °C par défaut). Eau chaude :
   degrés entiers, de 30 à 65 °C, plafonnés par « Consigne d'eau chaude la
-  plus haute » (65 °C par défaut, 65 au plus).
+  plus haute » (65 °C par défaut, 65 au plus ; un plafond avec une décimale est
+  arrondi vers le bas).
 - **Mode du thermostat** : « Chauffage » met la zone sur son timer, c'est-à-
   dire le programme gardé dans le hub : ses consignes sont celles du hub,
   les plafonds de l'intégration ne les couvrent pas. « Arrêt » arrête la
