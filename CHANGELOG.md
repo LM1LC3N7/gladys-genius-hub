@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-28
+
 ### Changed
 
 - Hot water ceiling raised to 65 °C (default 65 °C), whole degrees 30-65 °C.
@@ -66,6 +68,7 @@ the notes of the version's GitHub Release.
   read once more 0.5 s later; one follow-up read per due time; an "Off"
   ends the check of a command left unconfirmed.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-genius-hub/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/LM1LC3N7/gladys-genius-hub/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/LM1LC3N7/gladys-genius-hub/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/LM1LC3N7/gladys-genius-hub/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/LM1LC3N7/gladys-genius-hub/releases/tag/v0.1.1
