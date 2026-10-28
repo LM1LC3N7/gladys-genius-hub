@@ -101,8 +101,8 @@ export const GLADYS = {
 // --- Bounds (module side, whatever the hub says) -------------------------------------
 /** A room setpoint, in Celsius: the range of the Genius Hub application (4 to 28). */
 export const ROOM_SETPOINT = { min: 4, max: 28, defaultMax: 25 };
-/** The hot water setpoint, in whole Celsius: 55 by default, never above 60 (scalding). */
-export const HOT_WATER_SETPOINT = { min: 30, max: 60, defaultMax: 55 };
+/** The hot water setpoint, in whole Celsius: 65 by default, never above 65 (scalding). */
+export const HOT_WATER_SETPOINT = { min: 30, max: 65, defaultMax: 65 };
 /** An override lasts this many minutes (the application boosts for an hour). */
 export const OVERRIDE_MINUTES = { min: 10, max: 1440, default: 60 };
 /** The on/off zones: the value the hub takes as "on" in an override. */

@@ -28,7 +28,7 @@ test('the defaults, the bounds, the flags', () => {
   assert.equal(config.allowSetpoint, false);
   assert.equal(config.allowModes, false);
   assert.equal(config.maxSetpoint, 25);
-  assert.equal(config.maxHotWater, 55);
+  assert.equal(config.maxHotWater, 65);
   assert.ok(isComplete(config));
   const set = normalizeConfig({
     address: '192.168.1.50',
@@ -57,11 +57,14 @@ test('the defaults, the bounds, the flags', () => {
   assert.equal(out.pollInterval, 60);
   assert.equal(out.overrideMinutes, 60);
   assert.equal(out.maxSetpoint, 25);
-  assert.equal(out.maxHotWater, 55, 'never above 60, the default when out of bounds');
+  assert.equal(out.maxHotWater, 65, 'never above 65, the default when out of bounds');
   assert.equal(out.allowSetpoint, false);
+  assert.equal(normalizeConfig({}).maxHotWater, 65, '65 °C by default');
+  assert.equal(normalizeConfig({ max_hot_water: 65 }).maxHotWater, 65);
   assert.equal(normalizeConfig({ max_hot_water: 60 }).maxHotWater, 60);
-  assert.equal(normalizeConfig({ max_hot_water: 61 }).maxHotWater, 55);
-  assert.equal(normalizeConfig({ max_hot_water: 55.5 }).maxHotWater, 55, 'whole degrees');
+  assert.equal(normalizeConfig({ max_hot_water: 66 }).maxHotWater, 65);
+  assert.equal(normalizeConfig({ max_hot_water: 65.5 }).maxHotWater, 65, 'never above 65');
+  assert.equal(normalizeConfig({ max_hot_water: 55.5 }).maxHotWater, 65, 'whole degrees');
 });
 
 test('the login: both fields, no ":" in the user name, no control byte; incomplete forms', () => {

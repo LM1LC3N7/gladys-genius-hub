@@ -69,7 +69,7 @@ test/helpers/       the app on the fake Gladys, a scripted hub, a virtual clock
   its budget, its option checked on arrival, after the read and in
   `beforeSend`, and is a success only when the read-back shows what was
   written. Every setpoint written is bounded module-side, the one taken from
-  the hub by an override or a boost included (hot water never above 60 °C).
+  the hub by an override or a boost included (hot water never above 65 °C).
 - Never log or put in a status, an error or /data the password (only an
   8-bit salted tag of a refused one). Never add a call outside `HubClient`.
 - Our own words only in the texts: the error codes of `HubError`, the zone

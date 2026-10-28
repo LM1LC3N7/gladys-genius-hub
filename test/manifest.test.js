@@ -142,8 +142,8 @@ test('the configuration matches the code: address, login, pace, options, ceiling
     [fields.max_hot_water.default, fields.max_hot_water.min, fields.max_hot_water.max],
     [HOT_WATER_SETPOINT.defaultMax, HOT_WATER_SETPOINT.min, HOT_WATER_SETPOINT.max],
   );
-  assert.equal(HOT_WATER_SETPOINT.max, 60, 'never above 60 °C');
-  assert.equal(HOT_WATER_SETPOINT.defaultMax, 55);
+  assert.equal(HOT_WATER_SETPOINT.max, 65, 'never above 65 °C');
+  assert.equal(HOT_WATER_SETPOINT.defaultMax, 65);
   for (const link of fields.intro.links) {
     assert.match(link.url, /^https:\/\//);
   }

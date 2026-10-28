@@ -90,8 +90,9 @@ up to date at the end of every milestone.
   the issues. Devices behind the hub: read-only, `switch/binary` read-only
   for their output.
 - **Bounds**: room setpoints 4–28 °C (the app's range), capped by
-  `max_setpoint` (25 by default); hot water whole degrees 30–60 °C, capped
-  by `max_hot_water` (55 by default, 60 at most). Override duration 10–1440
+  `max_setpoint` (25 by default); hot water whole degrees 30–65 °C, capped
+  by `max_hot_water` (65 by default, 65 at most; Louis's rule of 2026-10-28,
+  was 55/60). Override duration 10–1440
   min (60 by default, the app's boost).
 - **Commands**: setpoint and mode commands behind `allow_setpoint` /
   `allow_modes` (off by default); "Off" without option, outside the read

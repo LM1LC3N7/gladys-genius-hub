@@ -131,16 +131,16 @@
       "key": "max_hot_water",
       "type": "number",
       "required": false,
-      "default": 55,
+      "default": 65,
       "min": 30,
-      "max": 60,
+      "max": 65,
       "label": {
         "en": "Highest hot water setpoint (°C)",
         "fr": "Consigne d'eau chaude la plus haute (°C)"
       },
       "description": {
-        "en": "A hot water setpoint above this is refused (55 °C by default, 60 °C at most: scalding).",
-        "fr": "Une consigne d'eau chaude au-dessus est refusée (55 °C par défaut, 60 °C au plus : brûlures)."
+        "en": "A hot water setpoint above this is refused (65 °C by default, 65 °C at most: scalding).",
+        "fr": "Une consigne d'eau chaude au-dessus est refusée (65 °C par défaut, 65 °C au plus : brûlures)."
       }
     }
   ],

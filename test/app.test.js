@@ -586,10 +586,10 @@ test('a setpoint: decided on a fresh read, an override for the configured durati
   assert.deepEqual(hub.patches[3].body, { iMode: 16, fBoostSP: 22.5, iBoostTimeRemaining: 1800 });
 });
 
-test('a setpoint: bounds (the ceiling of the configuration), steps, hot water whole degrees never above 60', async () => {
+test('a setpoint: bounds (the ceiling of the configuration), steps, hot water whole degrees never above 65', async () => {
   const { hub, set } = await setup({
     devices: [createdZone(), createdZone(ZONE.WATER)],
-    config: { ...ALLOWED, max_setpoint: 24, max_hot_water: 60 },
+    config: { ...ALLOWED, max_setpoint: 24, max_hot_water: 65 },
   });
   for (const [id, value, text] of [
     [Z(1, 'setpoint'), 24.5, /out of range: 4 to 24 °C/],
@@ -597,7 +597,8 @@ test('a setpoint: bounds (the ceiling of the configuration), steps, hot water wh
     [Z(1, 'setpoint'), 20.3, /not valid/],
     [Z(1, 'setpoint'), '', /not valid/],
     [Z(1, 'setpoint'), null, /not valid/],
-    [Z(4, 'setpoint'), 61, /out of range: 30 to 60 °C/],
+    [Z(4, 'setpoint'), 66, /out of range: 30 to 65 °C/],
+    [Z(4, 'setpoint'), 65.5, /not valid|out of range/],
     [Z(4, 'setpoint'), 50.5, /not valid/],
     [Z(1, 'zone-mode'), 'away', /not valid/],
     [Z(1, 'heating-mode'), 2, /not valid/],
@@ -607,15 +608,15 @@ test('a setpoint: bounds (the ceiling of the configuration), steps, hot water wh
     assert.match(ack.error, text);
   }
   assert.equal(hub.patches.length, 0);
-  const ok = await set(Z(4, 'setpoint'), 60);
+  const ok = await set(Z(4, 'setpoint'), 65);
   assert.equal(ok.success, true, ok.error);
-  assert.deepEqual(hub.patches[0].body, { iMode: 16, fBoostSP: 60, iBoostTimeRemaining: 3600 });
+  assert.deepEqual(hub.patches[0].body, { iMode: 16, fBoostSP: 65, iBoostTimeRemaining: 3600 });
 });
 
 test('r1-1: an override or a boost never writes a current setpoint outside the bounds', async () => {
   const hub = createHub();
   const water = zoneOf(hub, ZONE.WATER);
-  Object.assign(water, { iMode: 2, fSP: 65, fBoostSP: 0, iBoostTimeRemaining: 0 });
+  Object.assign(water, { iMode: 2, fSP: 66, fBoostSP: 0, iBoostTimeRemaining: 0 });
   const lounge = zoneOf(hub, ZONE.LOUNGE);
   Object.assign(lounge, { fSP: 28 });
   const { set, start, wait } = await setup({
@@ -625,7 +626,7 @@ test('r1-1: an override or a boost never writes a current setpoint outside the b
   });
   const boost = await set(Z(4, 'water-mode'), 3);
   assert.equal(boost.success, false);
-  assert.match(boost.error, /current setpoint of the zone \(65 °C\) is outside .*30 to 55 °C/);
+  assert.match(boost.error, /current setpoint of the zone \(66 °C\) is outside .*30 to 65 °C/);
   const room = await set(Z(1, 'zone-mode'), 'override');
   assert.match(room.error, /current setpoint of the zone \(28 °C\) is outside .*4 to 25 °C/);
   await start({ ...ALLOWED, max_hot_water: 60 });
